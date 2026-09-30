@@ -11,7 +11,7 @@ gace-dev-kb/
 │  ├─ CURRENT_DESIGN.md
 │  ├─ PROJECT_TREE.md
 │  └─ DESIGN_DELTA.md
-└─ .gitignore                  # to be added with implementation bootstrap
+└─ .gitignore                  # local untracked evidence observed; not yet verified in GitHub
 ```
 
 ## Responsibilities
@@ -39,3 +39,20 @@ docs/future/ # future design material, including Astera-related design when migr
 ```
 
 Do not create placeholder subsystems solely to make the tree look complete.
+
+
+## Local runtime boundary (verified outside repository source)
+
+The validated Windows runtime is intentionally outside this Git tree:
+
+```text
+F:\G-ACE-KB\
+├─ repo\
+├─ data\
+├─ runtime\
+│  └─ mcp-vector-search\   # mcp-vector-search 4.1.14 isolated runtime
+├─ assets\
+└─ .venv\
+```
+
+Runtime packages, model caches, generated vector/index data, and manual site-packages compatibility patches are not represented as repository source. A repository-managed bootstrap/compatibility mechanism is still planned and must be added to this tree only when implemented.
