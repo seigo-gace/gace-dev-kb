@@ -79,7 +79,7 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-Stratum is currently the first OSS-core candidate, not yet a final dependency. Windows real-environment validation is required before final adoption.
+`mcp-vector-search` 4.1.14 is the active OSS search/index core. Windows real-environment validation has passed for installation, dependency health, repository indexing, embedding generation, knowledge-graph build, and semantic retrieval. This does not yet establish MCP client E2E, automatic repository-to-KB ingestion, or cross-repository reuse E2E.
 
 ## 6. Runtime / storage boundary
 
@@ -99,3 +99,24 @@ Git stores source, configuration, design, tests, and durable documentation. Larg
 ## 7. Future boundary
 
 Astera-based KB architecture is future implementation material. It must not be represented as current implementation until implemented and validated. Future design material must remain clearly separated from the current baseline.
+
+
+## 8. Current implementation boundary (2026-09-30)
+
+Validated current capability:
+
+- isolated OSS runtime under `F:\G-ACE-KB\runtime\mcp-vector-search`;
+- Windows CLI and dependency doctor pass after a local compatibility patch;
+- real repository index pass: 4 files, 119 chunks, 119 embeddings;
+- knowledge graph build pass: 44 entities, 43 relationships;
+- semantic retrieval pass against known design and failure/root-cause/fix/validation content.
+
+Not yet implemented or not yet validated:
+
+- repository-managed reproducible Windows compatibility/bootstrap handling;
+- G-ACE repository/knowledge adapter;
+- automatic repository-to-KB ingestion;
+- MCP server to AI-client E2E;
+- cross-repository knowledge reuse E2E.
+
+The local OSS runtime and generated index remain outside Git source. Runtime-local manual patches are evidence of compatibility work, not durable repository implementation.
