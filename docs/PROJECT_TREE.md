@@ -11,6 +11,10 @@ gace-dev-kb/
 │  ├─ CURRENT_DESIGN.md
 │  ├─ PROJECT_TREE.md
 │  └─ DESIGN_DELTA.md
+├─ scripts/
+│  └─ bootstrap-mvs-windows.ps1
+├─ tests/
+│  └─ verify-mvs-windows.ps1
 └─ .gitignore                  # local untracked evidence observed; not yet verified in GitHub
 ```
 
@@ -56,3 +60,9 @@ F:\G-ACE-KB\
 ```
 
 Runtime packages, model caches, generated vector/index data, and manual site-packages compatibility patches are not represented as repository source. A repository-managed bootstrap/compatibility mechanism is still planned and must be added to this tree only when implemented.
+
+### `scripts/bootstrap-mvs-windows.ps1`
+Repository-managed Windows bootstrap for the pinned `mcp-vector-search` runtime and measured compatibility fixes.
+
+### `tests/verify-mvs-windows.ps1`
+Verifies the installed Windows compatibility state and CLI startup. A repository commit alone is not runtime PASS; execute this on the Master Windows runtime.
