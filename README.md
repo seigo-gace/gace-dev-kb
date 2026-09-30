@@ -93,6 +93,11 @@ F:\G-ACE-KB
 
 Only source, configuration, design, tests, and durable documentation belong in Git by default. Runtime downloads, generated indexes/data, caches, secrets, and local environments stay outside the repository unless a later design decision explicitly changes that boundary.
 
+## Windows bootstrap
+
+- `scripts/bootstrap-mvs-windows.ps1` installs the pinned OSS runtime and applies the two measured Windows/docs compatibility fixes.
+- `tests/verify-mvs-windows.ps1` verifies the installed compatibility state and CLI startup.
+
 ## Current status
 
 **OSS SEARCH CORE VALIDATED / G-ACE ADAPTER NOT YET IMPLEMENTED**
@@ -111,9 +116,13 @@ Completed:
 - knowledge graph build passed: 44 entities / 43 relationships;
 - semantic retrieval passed against known design and failure/root-cause/fix/validation content.
 
+Implemented on the active feature branch, pending Windows real-runtime verification:
+
+- repository-managed Windows bootstrap/compatibility scripts for `mcp-vector-search` 4.1.14.
+
 Not yet completed:
 
-- reproducible repository-managed Windows compatibility/bootstrap handling;
+- Windows real-runtime verification of the repository-managed bootstrap;
 - MCP server → AI client E2E validation;
 - G-ACE knowledge adapter implementation;
 - repository-to-KB ingestion;
