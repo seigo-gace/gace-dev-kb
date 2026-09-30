@@ -104,7 +104,12 @@ Completed:
 - Current Design established;
 - Project Tree established;
 - Design Delta established;
-- local repository cloned under `F:\G-ACE-KB\repo`.
+- local repository cloned under `F:\G-ACE-KB\repo`;
+- `mcp-vector-search` 4.1.14 installed in the isolated local runtime;
+- Windows CLI/doctor validation passed after local compatibility handling;
+- real repository indexing passed: 4 files / 119 chunks / 119 embeddings;
+- knowledge graph build passed: 44 entities / 43 relationships;
+- semantic retrieval passed against known design and failure/root-cause/fix/validation content.
 
 Not yet completed:
 
