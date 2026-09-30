@@ -34,7 +34,7 @@ if ($mainText -match '(?m)^import resource\s*$') {
 if sys.platform != "win32":
     import resource
 '@
-    $mainText = $mainText -replace '(?m)^import resource\s*
+    $mainText = [regex]::Replace($mainText, '(?m)^import resource\s*$', $resourceGuard)
     Set-Content $Main -Value $mainText -Encoding UTF8
 }
 
