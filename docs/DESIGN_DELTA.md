@@ -174,3 +174,21 @@ The next custom implementation is limited to the G-ACE-specific repository/knowl
 ### Applying commits
 
 This delta is documentation of already observed runtime evidence. The documentation-alignment commits following the prior baseline update record the current verified state; they do not claim the remaining gates are complete.
+
+
+---
+
+## 2026-09-30 — repository-managed Windows compatibility bootstrap added
+
+**Status:** source implemented on feature branch; Windows runtime verification pending.
+
+### Change
+
+Added a repository-managed PowerShell bootstrap for pinned `mcp-vector-search==4.1.14` plus a verification script. The bootstrap reproduces the two compatibility changes previously applied manually in site-packages:
+
+- guard the Unix-only `resource` import on Windows;
+- fall back to the final similarity score when the original similarity is `None` during result rendering.
+
+### Boundary
+
+This removes the design dependence on undocumented manual edits at the source level, but it is not yet runtime PASS. The scripts must be executed against the Master Windows runtime and the same index/search failure conditions must be retested before this gate is closed.
