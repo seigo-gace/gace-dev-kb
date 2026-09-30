@@ -61,7 +61,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-Stratum is currently the first OSS-core candidate. It is **not yet a final dependency**: Windows real-environment validation is required before adoption is considered complete.
+`mcp-vector-search` 4.1.14 is the active OSS core. Windows real-environment validation has passed for installation, dependency health, repository indexing, embeddings, knowledge-graph build, and semantic retrieval. MCP client E2E and durable/reproducible Windows compatibility handling remain incomplete.
 
 ## Initial knowledge contract
 
@@ -95,7 +95,7 @@ Only source, configuration, design, tests, and durable documentation belong in G
 
 ## Current status
 
-**BOOTSTRAP / DESIGN BASELINE**
+**OSS SEARCH CORE VALIDATED / G-ACE ADAPTER NOT YET IMPLEMENTED**
 
 Completed:
 
@@ -108,8 +108,8 @@ Completed:
 
 Not yet completed:
 
-- OSS-core Windows real-environment validation;
-- final OSS-core adoption;
+- reproducible repository-managed Windows compatibility/bootstrap handling;
+- MCP server → AI client E2E validation;
 - G-ACE knowledge adapter implementation;
 - repository-to-KB ingestion;
 - end-to-end knowledge retrieval/reuse validation.
