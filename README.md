@@ -1,10 +1,44 @@
 # G-ACE Development Knowledge Base
 
-G-ACE Dev KB is a repository-centered development knowledge base for reusing implementation knowledge across projects.
+G-ACE Dev KB is the repository-centered knowledge base for reusing development knowledge across G-ACE projects.
+
+> **Development starts here.** Before changing source, read the linked Current Design and Project Tree. Check Design Delta when the work touches an existing design decision. Do not treat future design as current implementation.
+
+## Development entry points
+
+- [Current Design](docs/CURRENT_DESIGN.md) — current design baseline, responsibilities, boundaries, and repository workflow.
+- [Project Tree](docs/PROJECT_TREE.md) — current repository navigation and file/directory responsibilities.
+- [Design Delta](docs/DESIGN_DELTA.md) — intentional differences from the baseline, why they changed, evidence, and applying commits.
+
+## Mandatory repository routine
+
+```text
+README
+→ Current Design / Project Tree / relevant Design Delta
+→ implementation
+→ test / debug / validation
+→ commit = work/change record
+→ documentation gate
+→ completion gate
+→ KB ingestion
+```
+
+Before declaring work complete, explicitly determine whether the change requires updates to:
+
+- README
+- Project Tree
+- Design Delta
+- a system/feature document
+
+If an update is required but missing, the work is not complete.
+
+### Design rule
+
+Design is a baseline. Do **not** silently rewrite design merely because implementation differs. When an intentional implementation change differs from the baseline, record the difference, reason, evidence, and applying commit in Design Delta. Reflect completed and validated capability in README.
 
 ## Purpose
 
-Capture and reuse development knowledge derived from repository work, including:
+Capture and reuse repository-derived development knowledge, including:
 
 - reusable implementation assets
 - design and decision rationale
@@ -15,49 +49,23 @@ Capture and reuse development knowledge derived from repository work, including:
 - tests and validation results
 - commit/evidence references
 
-## Current architecture baseline
+The repository and Git history remain the primary development evidence. The KB is the reuse/search layer, not a replacement source of truth.
 
-The target architecture is:
+## Minimal implementation strategy
 
-```text
-Repository development routine
-        ↓
-G-ACE Knowledge Adapter
-        ↓
-Stratum core
-        ↓
-local knowledge / code index / search / MCP
-        ↓
-ChatGPT / Codex / DebugAI / other AI consumers
-```
+Build the shortest useful system:
 
-The implementation rule is to keep this as small as possible:
+1. use one suitable OSS core first;
+2. reuse OSS functionality instead of rebuilding generic KB/search/MCP capability;
+3. migrate only valuable G-ACE-specific parts from the former KB System;
+4. add only the missing repository/knowledge adapter logic;
+5. add another component only after a measured gap is confirmed.
 
-- one OSS core first
-- reuse existing OSS capabilities instead of rebuilding them
-- add only G-ACE-specific metadata / ingestion logic that the OSS does not provide
-- add another component only after a real measured gap is confirmed
+Stratum is currently the first OSS-core candidate. It is **not yet a final dependency**: Windows real-environment validation is required before adoption is considered complete.
 
-## Repository workflow integration
+## Initial knowledge contract
 
-The KB is downstream of the repository development loop:
-
-```text
-README
-→ Design / Project Tree / Design Delta
-→ implementation
-→ test / debug / validation
-→ commit
-→ documentation gate
-→ completion gate
-→ KB ingestion
-```
-
-Repository files and Git history remain the primary development evidence. The KB is the reuse/search layer, not a replacement source of truth.
-
-## Planned knowledge fields
-
-Initial G-ACE-specific fields are intentionally minimal:
+Keep the first record shape small:
 
 - `type`
 - `repository`
@@ -68,20 +76,42 @@ Initial G-ACE-specific fields are intentionally minimal:
 - `validation`
 - `source`
 
-Types will cover at least reusable implementation, design/decision, failure/root-cause/fix, and validation knowledge without creating separate subsystems for each.
+This must support at least reusable implementation, design/decision, failure/root-cause/fix, and validation knowledge without creating a separate subsystem for every type.
 
-## Local target
+## Local layout
 
-Primary local data location:
+Primary local root:
 
 ```text
 F:\G-ACE-KB
+├─ repo\       # this repository
+├─ data\       # local KB/index data
+├─ runtime\    # OSS runtime
+├─ assets\     # migration/input assets
+└─ .venv\      # local environment from preparation
 ```
 
-The Git repository contains source, configuration, design and tests. Large local indexes / runtime data should remain outside Git unless explicitly required.
+Only source, configuration, design, tests, and durable documentation belong in Git by default. Runtime downloads, generated indexes/data, caches, secrets, and local environments stay outside the repository unless a later design decision explicitly changes that boundary.
 
-## Status
+## Current status
 
-Current status: **bootstrap / design baseline only**.
+**BOOTSTRAP / DESIGN BASELINE**
 
-Stratum has been selected as the first OSS core candidate. It still requires Windows real-environment validation before being treated as the final core.
+Completed:
+
+- repository created;
+- README established as the development entry point;
+- Current Design established;
+- Project Tree established;
+- Design Delta established;
+- local repository cloned under `F:\G-ACE-KB\repo`.
+
+Not yet completed:
+
+- OSS-core Windows real-environment validation;
+- final OSS-core adoption;
+- G-ACE knowledge adapter implementation;
+- repository-to-KB ingestion;
+- end-to-end knowledge retrieval/reuse validation.
+
+Do not report those incomplete items as implemented or validated.
