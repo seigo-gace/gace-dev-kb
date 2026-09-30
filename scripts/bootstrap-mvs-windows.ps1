@@ -30,7 +30,43 @@ if (-not (Test-Path $Output)) { throw "MVS_OUTPUT_NOT_FOUND=$Output" }
 
 $mainText = Get-Content $Main -Raw
 if ($mainText -match '(?m)^import resource\s*$') {
-    $mainText = $mainText -replace '(?m)^import resource\s*$', "if sys.platform != \"win32\":`r`n    import resource"
+    $resourceGuard = @'
+if sys.platform != "win32":
+    import resource
+'@
+    $mainText = $mainText -replace '(?m)^import resource\s*
+    Set-Content $Main -Value $mainText -Encoding UTF8
+}
+
+$outputText = Get-Content $Output -Raw
+$needle = @'
+            relevance_score = result._original_similarity
+            combined_score = result.similarity_score
+'@
+$replacement = @'
+            relevance_score = result._original_similarity
+            combined_score = result.similarity_score
+
+            # G-ACE Windows/docs compatibility: documentation chunks can
+            # have no original similarity. Use the final score for display.
+            if relevance_score is None:
+                relevance_score = combined_score
+'@
+if ($outputText.Contains($needle) -and -not $outputText.Contains('if relevance_score is None:')) {
+    $outputText = $outputText.Replace($needle, $replacement)
+    Set-Content $Output -Value $outputText -Encoding UTF8
+}
+
+& $Mvs --help *> $null
+if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
+
+& $Mvs doctor
+if ($LASTEXITCODE -ne 0) { throw "MVS_DOCTOR_FAILED=$LASTEXITCODE" }
+
+Write-Host 'MVS_WINDOWS_BOOTSTRAP=PASS'
+Write-Host "RUNTIME=$Runtime"
+Write-Host 'VERSION=4.1.14'
+, $resourceGuard
     Set-Content $Main -Value $mainText -Encoding UTF8
 }
 
