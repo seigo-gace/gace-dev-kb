@@ -125,3 +125,52 @@ Continue with `mcp-vector-search` as the active OSS-core candidate. Do not add a
 ### Applying commit
 
 This documentation commit records the measured Windows installation/compatibility result. It does not claim the remaining index/search/MCP gates have passed.
+
+
+---
+
+## 2026-09-30 — mcp-vector-search real index and semantic retrieval validated
+
+**Status:** index/search validated; MCP client E2E and G-ACE adapter remain incomplete.
+
+### Evidence
+
+Windows real-environment execution against `F:\G-ACE-KB\repo` produced:
+
+- mcp-vector-search 4.1.14;
+- indexed files: 4/4;
+- chunks: 119;
+- embeddings: 119;
+- embedding model: `sentence-transformers/all-MiniLM-L6-v2`;
+- knowledge graph: 44 entities / 43 relationships;
+- semantic design query returned `CURRENT_DESIGN.md` as the first result;
+- semantic failure/root-cause/fix/validation query returned relevant repository knowledge.
+
+### Compatibility findings
+
+Two runtime-local compatibility issues were encountered:
+
+1. upstream CLI imported the Unix-only Python `resource` module on Windows;
+2. search-result rendering attempted percentage formatting when the original similarity value was `None`.
+
+Both were minimally patched in the isolated installed runtime and the resulting CLI/search gates passed. These manual site-packages edits are not yet durable repository implementation and may be overwritten by reinstall/upgrade.
+
+A Windows-path knowledge-graph delete warning and entity-matching warnings were also observed. The graph subsequently completed successfully. These warnings are retained as unresolved compatibility evidence rather than being reported as fixed.
+
+### Current design decision
+
+Adopt `mcp-vector-search` as the active OSS search/index core for the current implementation path. Do not add another generic search/KB core without a measured gap.
+
+The next custom implementation is limited to the G-ACE-specific repository/knowledge adapter and reproducible Windows compatibility/bootstrap handling.
+
+### Remaining gates
+
+- repository-managed reproducible Windows compatibility/bootstrap;
+- G-ACE knowledge adapter;
+- automatic repository-to-KB ingestion;
+- MCP server → AI-client E2E;
+- cross-repository reuse E2E.
+
+### Applying commits
+
+This delta is documentation of already observed runtime evidence. The documentation-alignment commits following the prior baseline update record the current verified state; they do not claim the remaining gates are complete.
