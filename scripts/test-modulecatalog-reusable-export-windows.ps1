@@ -28,6 +28,7 @@ $SearchRecords = Join-Path $SearchRoot 'records'
 $Metadata = Join-Path $ImportRoot 'knowledge-metadata.jsonl'
 $KnowledgeRecords = Join-Path $ImportRoot 'knowledge-records.jsonl'
 $FormalJsonl = Join-Path $Root 'data\knowledge-records\formal-kb.jsonl'
+$TrialMarker = Join-Path $TrialRoot 'trial-pass.json'
 
 foreach ($path in @($Repo,$Python,$RuntimePython,$Mvs,$Bridge,$Importer,$Probe,$SafetyPatch)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
@@ -101,7 +102,8 @@ if (Test-Path $TrialRoot) { Remove-Item $TrialRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $TrialRoot -Force | Out-Null
 & $NodePath $Bridge --catalog-root $Catalog --output-root $ExportRoot --catalog-commit $CatalogCommit --expected-asset-count $ExpectedAssetCount
 if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_EXPORT_FAILED=$LASTEXITCODE" }
-if (-not (Test-Path (Join-Path $ExportRoot 'manifest.json'))) { throw 'MODULECATALOG_EXPORT_MANIFEST_MISSING' }
+$ExportManifest = Join-Path $ExportRoot 'manifest.json'
+if (-not (Test-Path $ExportManifest)) { throw 'MODULECATALOG_EXPORT_MANIFEST_MISSING' }
 
 Write-Host '=== IMPORT REUSABLE ASSET EXPORT INTO KB PROJECTION ==='
 & $Python -B $Importer --export-root $ExportRoot --output-root $ImportRoot --expected-catalog-commit $CatalogCommit --expected-asset-count $ExpectedAssetCount --expected-record-count $ExpectedRecordCount
@@ -163,7 +165,24 @@ if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_REUSABLE_MCP_E2E_FAILED=$LASTEXI
 $FormalAfter = Get-OptionalSha256 -Path $FormalJsonl
 if ($FormalBefore -ne $FormalAfter) { throw 'FORMAL_KB_CHANGED_DURING_TRIAL' }
 
+$Marker = [ordered]@{
+    schemaVersion = 1
+    status = 'PASS'
+    catalogRepository = $CatalogRepository
+    catalogCommit = $CatalogCommit
+    assetCount = $ExpectedAssetCount
+    recordCount = $ExpectedRecordCount
+    exportManifestSha256 = (Get-FileHash -Algorithm SHA256 -Path $ExportManifest).Hash
+    knowledgeRecordsSha256 = (Get-FileHash -Algorithm SHA256 -Path $KnowledgeRecords).Hash
+    knowledgeMetadataSha256 = (Get-FileHash -Algorithm SHA256 -Path $Metadata).Hash
+    formalKbBeforeSha256 = $FormalBefore
+    formalKbAfterSha256 = $FormalAfter
+    verifiedAtUtc = [DateTime]::UtcNow.ToString('o')
+}
+$Marker | ConvertTo-Json -Depth 8 | Set-Content -Path $TrialMarker -Encoding UTF8
+
 Write-Host "GACE_MODULECATALOG_REUSABLE_TRIAL=PASS ASSETS=$ExpectedAssetCount RECORDS=$ExpectedRecordCount"
 Write-Host "PINNED_MODULECATALOG_COMMIT=$CatalogCommit"
 Write-Host "TRIAL_ROOT=$TrialRoot"
+Write-Host "TRIAL_MARKER=$TrialMarker"
 Write-Host 'FORMAL_KB_UNCHANGED=YES'
