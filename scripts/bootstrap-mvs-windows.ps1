@@ -26,9 +26,11 @@ $Main = Join-Path $Site 'cli\main.py'
 $Output = Join-Path $Site 'cli\output.py'
 $KnowledgeGraph = Join-Path $Site 'core\knowledge_graph.py'
 $ChunkProcessor = Join-Path $Site 'core\chunk_processor.py'
+$Embeddings = Join-Path $Site 'core\embeddings.py'
+$Indexer = Join-Path $Site 'core\indexer.py'
 $McpServer = Join-Path $Site 'mcp\server.py'
 
-foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor, $McpServer)) {
+foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor, $Embeddings, $Indexer, $McpServer)) {
     if (-not (Test-Path $p)) { throw "MVS_SOURCE_NOT_FOUND=$p" }
 }
 
@@ -99,6 +101,67 @@ if (-not $chunkText.Contains($spawnMarker)) {
 
 if (-not $chunkText.Contains($spawnMarker)) {
     throw 'WINDOWS_MP_CONTEXT_PATCH_POSTCONDITION_FAILED'
+}
+
+# sentence-transformers renamed get_sentence_embedding_dimension() to
+# get_embedding_dimension(). The old method still works but emits a FutureWarning
+# in the current Master runtime. Prefer the new API while retaining compatibility
+# with older sentence-transformers releases.
+$embeddingText = Get-Content $Embeddings -Raw
+$embeddingMarker = 'if hasattr(self.model, "get_embedding_dimension"):'
+if (-not $embeddingText.Contains($embeddingMarker)) {
+    $embeddingPattern = '(?m)^(?<indent>[ \t]*)_raw_dims\s*=\s*self\.model\.get_sentence_embedding_dimension\(\)\s*$'
+    $embeddingReplacement = @'
+${indent}if hasattr(self.model, "get_embedding_dimension"):
+${indent}    _raw_dims = self.model.get_embedding_dimension()
+${indent}else:
+${indent}    _raw_dims = self.model.get_sentence_embedding_dimension()
+'@
+    $patchedEmbeddingText = [regex]::Replace($embeddingText, $embeddingPattern, $embeddingReplacement, 1)
+    if ($patchedEmbeddingText -eq $embeddingText) {
+        throw 'EMBEDDING_DIMENSION_API_PATCH_TARGET_NOT_FOUND'
+    }
+    Set-Content $Embeddings -Value $patchedEmbeddingText -Encoding UTF8
+    $embeddingText = $patchedEmbeddingText
+}
+if (-not $embeddingText.Contains($embeddingMarker)) {
+    throw 'EMBEDDING_DIMENSION_API_PATCH_POSTCONDITION_FAILED'
+}
+
+# mcp-vector-search 4.1.14 finalizes a forced atomic rebuild before the BM25
+# build in _index_project_impl(). The Lance tables are renamed from lance.new
+# to lance during finalization, but the existing backend objects still point to
+# the old .new paths. Reopen both backends on the final lance directory before
+# BM25 reads chunks.lance. chunk_files() already applies the same re-open rule.
+$indexerText = Get-Content $Indexer -Raw
+$indexerMarker = '# G-ACE atomic rebuild compatibility: reopen final Lance paths before BM25.'
+if (-not $indexerText.Contains($indexerMarker)) {
+    $indexerPattern = '(?ms)^        # Finalize atomic rebuild if active\r?\n        if atomic_rebuild_active and indexed_count > 0:\r?\n            await self\._finalize_atomic_rebuild\(\)\r?\n\r?\n        # Phase 3: Build BM25 index for hybrid search'
+    $indexerReplacement = @'
+        # Finalize atomic rebuild if active
+        if atomic_rebuild_active and indexed_count > 0:
+            await self._finalize_atomic_rebuild()
+
+            # G-ACE atomic rebuild compatibility: reopen final Lance paths before BM25.
+            # Finalization renames lance.new -> lance; stale table handles still point
+            # at the removed .new location and can make the BM25 scan fail on Windows.
+            lance_path = self._mcp_dir / "lance"
+            self.chunks_backend = ChunksBackend(lance_path)
+            self.vectors_backend = VectorsBackend(lance_path)
+            await self.chunks_backend.initialize()
+            await self.vectors_backend.initialize()
+
+        # Phase 3: Build BM25 index for hybrid search
+'@
+    $patchedIndexerText = [regex]::Replace($indexerText, $indexerPattern, $indexerReplacement, 1)
+    if ($patchedIndexerText -eq $indexerText) {
+        throw 'ATOMIC_BM25_BACKEND_REOPEN_PATCH_TARGET_NOT_FOUND'
+    }
+    Set-Content $Indexer -Value $patchedIndexerText -Encoding UTF8
+    $indexerText = $patchedIndexerText
+}
+if (-not $indexerText.Contains($indexerMarker)) {
+    throw 'ATOMIC_BM25_BACKEND_REOPEN_PATCH_POSTCONDITION_FAILED'
 }
 
 # mcp-vector-search 4.1.14 still uses the MCP SDK 1.x decorator API
@@ -210,3 +273,5 @@ Write-Host "RUNTIME=$Runtime"
 Write-Host 'VERSION=4.1.14'
 Write-Host "MP_CONTEXT=$mpContext"
 Write-Host 'MCP_SDK2_COMPAT=PASS'
+Write-Host 'EMBEDDING_DIMENSION_API=PASS'
+Write-Host 'ATOMIC_BM25_BACKEND_REOPEN=PASS'
