@@ -137,10 +137,10 @@ try {
     if ($recordCount -lt 2) { throw "CROSS_REPO_RECORD_COUNT_INVALID=$recordCount" }
 
     $combinedText = Get-Content $CombinedJsonl -Raw
-    if (-not $combinedText.Contains(('"repository":"' + $CurrentRepository + '"'))) {
+    if (-not $combinedText.Contains(('"repository":"' + $CurrentRepository + '"').Replace('\',''))) {
         throw "CROSS_REPO_CURRENT_IDENTITY_MISSING=$CurrentRepository"
     }
-    if (-not $combinedText.Contains(('"repository":"' + $SourceRepository + '"'))) {
+    if (-not $combinedText.Contains(('"repository":"' + $SourceRepository + '"').Replace('\',''))) {
         throw "CROSS_REPO_SOURCE_IDENTITY_MISSING=$SourceRepository"
     }
     if (-not $combinedText.Contains($CurrentCommit)) {
