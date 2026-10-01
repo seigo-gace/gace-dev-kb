@@ -20,6 +20,8 @@ $Renderer = Join-Path $Repo 'scripts\render_knowledge_corpus.py'
 $McpTest = Join-Path $Repo 'tests\mcp_cross_repo_reuse_e2e.py'
 $Bootstrap = Join-Path $Repo 'scripts\bootstrap-mvs-windows.ps1'
 $Verify = Join-Path $Repo 'tests\verify-mvs-windows.ps1'
+$CurrentRepository = 'seigo-gace/gace-dev-kb'
+$CurrentCommit = 'a017c934'
 
 foreach ($p in @($Python,$Repo,$RuntimePython,$Mvs,$Adapter,$Combiner,$Renderer,$McpTest,$Bootstrap,$Verify)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
@@ -134,6 +136,21 @@ try {
     $recordCount = @(Get-Content $CombinedJsonl | Where-Object { $_.Trim() }).Count
     if ($recordCount -lt 2) { throw "CROSS_REPO_RECORD_COUNT_INVALID=$recordCount" }
 
+    $combinedText = Get-Content $CombinedJsonl -Raw
+    if (-not $combinedText.Contains(('"repository":"' + $CurrentRepository + '"'))) {
+        throw "CROSS_REPO_CURRENT_IDENTITY_MISSING=$CurrentRepository"
+    }
+    if (-not $combinedText.Contains(('"repository":"' + $SourceRepository + '"'))) {
+        throw "CROSS_REPO_SOURCE_IDENTITY_MISSING=$SourceRepository"
+    }
+    if (-not $combinedText.Contains($CurrentCommit)) {
+        throw "CROSS_REPO_CURRENT_COMMIT_MISSING=$CurrentCommit"
+    }
+    if (-not $combinedText.Contains($SourceCommit)) {
+        throw "CROSS_REPO_SOURCE_COMMIT_RECORD_MISSING=$SourceCommit"
+    }
+    Write-Host "CROSS_REPO_IDENTITIES=PASS CURRENT=$CurrentRepository SOURCE=$SourceRepository"
+
     Write-Host '=== RENDER COMBINED CORPUS ==='
     New-Item -ItemType Directory -Path $SearchRoot -Force | Out-Null
     & $Python -B $Renderer --input $CombinedJsonl --output-dir $Corpus
@@ -169,7 +186,7 @@ try {
         --python $RuntimePython `
         --project-root $SearchRoot `
         --timeout $TimeoutSeconds `
-        --check 'combine deterministic knowledge records across repositories' 'a017c934' 'seigo-gace/gace-dev-kb' `
+        --check 'combine deterministic knowledge records across repositories' $CurrentCommit $CurrentRepository `
         --check 'rewrite FAQ options pricing developer details' $SourceCommit $SourceRepository
     if ($LASTEXITCODE -ne 0) { throw "CROSS_REPO_MCP_REUSE_FAILED=$LASTEXITCODE" }
 
