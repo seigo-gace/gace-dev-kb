@@ -28,9 +28,10 @@ $KnowledgeGraph = Join-Path $Site 'core\knowledge_graph.py'
 $ChunkProcessor = Join-Path $Site 'core\chunk_processor.py'
 $Embeddings = Join-Path $Site 'core\embeddings.py'
 $Indexer = Join-Path $Site 'core\indexer.py'
+$SearchEngine = Join-Path $Site 'core\search.py'
 $McpServer = Join-Path $Site 'mcp\server.py'
 
-foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor, $Embeddings, $Indexer, $McpServer)) {
+foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor, $Embeddings, $Indexer, $SearchEngine, $McpServer)) {
     if (-not (Test-Path $p)) { throw "MVS_SOURCE_NOT_FOUND=$p" }
 }
 
@@ -164,6 +165,43 @@ if (-not $indexerText.Contains($indexerMarker)) {
     throw 'ATOMIC_BM25_BACKEND_REOPEN_PATCH_POSTCONDITION_FAILED'
 }
 
+# Search's KG enhancement treats every vector chunk ID as a CodeEntity ID/name.
+# The generated G-ACE knowledge corpus is documentation-only: its KG has
+# Documents/DocSections but zero CodeEntity nodes. In that case find_related()
+# emits one false warning per result. Skip code-entity KG enhancement when the
+# loaded KG explicitly has no code entities; vector/BM25 retrieval is unchanged.
+$searchText = Get-Content $SearchEngine -Raw
+$searchMarker = '# G-ACE docs-only KG compatibility: no CodeEntity nodes means no code KG boost.'
+if (-not $searchText.Contains($searchMarker)) {
+    $searchPattern = '(?ms)^(?<indent>        )if not self\._kg:\r?\n\k<indent>    return results\r?\n\r?\n\k<indent>try:\r?\n\k<indent>    # Extract query terms for matching'
+    $searchReplacement = @'
+        if not self._kg:
+            return results
+
+        # G-ACE docs-only KG compatibility: no CodeEntity nodes means no code KG boost.
+        # Documentation-only corpora use Document/DocSection nodes; passing their raw
+        # chunk IDs to find_related() incorrectly tries to resolve them as CodeEntity names.
+        try:
+            kg_stats = await self._kg.get_stats()
+            if int(kg_stats.get("code_entities", 0) or 0) == 0:
+                return results
+        except Exception:
+            pass
+
+        try:
+            # Extract query terms for matching
+'@
+    $patchedSearchText = [regex]::Replace($searchText, $searchPattern, $searchReplacement, 1)
+    if ($patchedSearchText -eq $searchText) {
+        throw 'DOC_ONLY_KG_ENHANCEMENT_PATCH_TARGET_NOT_FOUND'
+    }
+    Set-Content $SearchEngine -Value $patchedSearchText -Encoding UTF8
+    $searchText = $patchedSearchText
+}
+if (-not $searchText.Contains($searchMarker)) {
+    throw 'DOC_ONLY_KG_ENHANCEMENT_PATCH_POSTCONDITION_FAILED'
+}
+
 # mcp-vector-search 4.1.14 still uses the MCP SDK 1.x decorator API
 # (server.list_tools()/server.call_tool()), while its dependency constraint
 # allows MCP SDK 2.x. MCP 2.x removed those decorators and accepts handlers in
@@ -275,3 +313,4 @@ Write-Host "MP_CONTEXT=$mpContext"
 Write-Host 'MCP_SDK2_COMPAT=PASS'
 Write-Host 'EMBEDDING_DIMENSION_API=PASS'
 Write-Host 'ATOMIC_BM25_BACKEND_REOPEN=PASS'
+Write-Host 'DOC_ONLY_KG_ENHANCEMENT=PASS'
