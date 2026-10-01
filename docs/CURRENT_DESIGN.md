@@ -79,44 +79,95 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS search/index core. Windows real-environment validation has passed for installation, dependency health, repository indexing, embedding generation, knowledge-graph build, and semantic retrieval. This does not yet establish MCP client E2E, automatic repository-to-KB ingestion, or cross-repository reuse E2E.
+`mcp-vector-search` 4.1.14 is the active OSS search/index core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, and semantic retrieval regression have passed on the Master Windows environment. This does not yet establish MCP client E2E, automatic generated-record indexing, or cross-repository reuse E2E.
 
-## 6. Runtime / storage boundary
+## 6. G-ACE repository / knowledge adapter boundary
+
+The adapter sits between committed repository evidence and the generic OSS search layer:
+
+```text
+Git repository / committed evidence
+  ↓
+G-ACE Knowledge Adapter
+  ↓
+initial knowledge record
+  ├─ type
+  ├─ repository
+  ├─ commit
+  ├─ summary
+  ├─ cause
+  ├─ fix
+  ├─ validation
+  └─ source
+  ↓
+generated knowledge projection outside Git source
+  ↓
+mcp-vector-search indexing / retrieval
+```
+
+Adapter rules:
+
+- Git remains authority; the adapter only projects committed evidence.
+- Generic MCP/search capability stays in `mcp-vector-search`; do not build a second MCP server for the adapter.
+- Record generation must be deterministic and must not invent missing cause, fix, validation, or source evidence.
+- Explicit commit-body markers (`Cause:`, `Fix:`, `Validation:`, `Source:`) may populate the corresponding fields.
+- When a field is not supported by committed evidence, it remains empty rather than being synthesized.
+- Modified or staged tracked files block normal export so uncommitted work is not represented as durable knowledge.
+- Untracked local-only files do not block export; this preserves the current local `.gitignore` evidence without treating it as committed knowledge.
+- Generated exports stay outside the repository source tree under the local data boundary.
+
+The first adapter source and Windows export wrapper are implemented on the active feature branch. They remain pending Master Windows runtime validation before they are considered PASS.
+
+## 7. Runtime / storage boundary
 
 Local root:
 
 ```text
 F:\G-ACE-KB
 ├─ repo\       # this Git repository
-├─ data\       # local KB/index data; not Git source
+├─ data\       # local KB/index data and generated knowledge records; not Git source
 ├─ runtime\    # OSS runtime; not Git source unless explicitly vendored later
 ├─ assets\     # local migration/input assets
 └─ .venv\      # local environment from earlier preparation; not Git source
 ```
 
-Git stores source, configuration, design, tests, and durable documentation. Large indexes, caches, runtime downloads, generated data, secrets, and local environments stay outside Git unless a later design decision explicitly changes that boundary.
+Git stores source, configuration, design, tests, and durable documentation. Large indexes, caches, runtime downloads, generated data, generated knowledge-record exports, secrets, and local environments stay outside Git unless a later design decision explicitly changes that boundary.
 
-## 7. Future boundary
+## 8. Future boundary
 
 Astera-based KB architecture is future implementation material. It must not be represented as current implementation until implemented and validated. Future design material must remain clearly separated from the current baseline.
 
-
-## 8. Current implementation boundary (2026-09-30)
+## 9. Current implementation boundary (2026-10-01)
 
 Validated current capability:
 
 - isolated OSS runtime under `F:\G-ACE-KB\runtime\mcp-vector-search`;
-- Windows CLI and dependency doctor pass after a local compatibility patch;
-- real repository index pass: 4 files, 119 chunks, 119 embeddings;
-- knowledge graph build pass: 44 entities, 43 relationships;
-- semantic retrieval pass against known design and failure/root-cause/fix/validation content.
+- repository-managed Windows bootstrap PASS;
+- Windows compatibility verifier PASS;
+- full tracked-corpus reindex PASS: 4 files, 161 chunks, 161 embeddings;
+- knowledge graph build PASS: 58 entities, 57 relationships;
+- status PASS: 4/4 indexed with mcp-vector-search 4.1.14;
+- semantic design retrieval PASS;
+- semantic failure/root-cause/fix/validation retrieval PASS;
+- real Windows regression gate PASS;
+- temporary regression override of `respect_gitignore` restored to its original `true` value.
+
+Observed but not closed:
+
+- BM25 index build emitted a non-fatal warning and hybrid search fell back to vector-only mode during regression;
+- semantic searches emitted entity-matching warnings despite returning the required results;
+- local `.gitignore` remains untracked and is intentionally not mutated by repository automation.
+
+Implemented in repository source, pending Windows runtime validation:
+
+- deterministic G-ACE Git repository → knowledge-record adapter;
+- adapter unit tests;
+- Windows export wrapper writing JSONL outside Git source.
 
 Not yet implemented or not yet validated:
 
-- repository-managed reproducible Windows compatibility/bootstrap handling;
-- G-ACE repository/knowledge adapter;
-- automatic repository-to-KB ingestion;
+- Windows real-runtime adapter unit-test PASS;
+- Windows real export PASS;
+- automatic generated-record → mcp-vector-search indexing;
 - MCP server to AI-client E2E;
 - cross-repository knowledge reuse E2E.
-
-The local OSS runtime and generated index remain outside Git source. Runtime-local manual patches are evidence of compatibility work, not durable repository implementation.
