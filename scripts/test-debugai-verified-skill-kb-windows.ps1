@@ -30,17 +30,15 @@ if ($ExpectedSkillCount -lt 1) {
 
 Write-Host '=== PREPARE PINNED MODULECATALOG SOURCE ==='
 New-Item -ItemType Directory -Path (Split-Path $Catalog) -Force | Out-Null
-if (-not (Test-Path (Join-Path $Catalog '.git'))) {
-    git clone https://github.com/seigo-gace/modular-catalog.git $Catalog
-    if ($LASTEXITCODE -ne 0) {
-        throw "MODULECATALOG_CLONE_FAILED=$LASTEXITCODE"
-    }
+if (Test-Path $Catalog) {
+    Remove-Item $Catalog -Recurse -Force
 }
 
-git -C $Catalog fetch origin
+git -c core.autocrlf=false clone --no-checkout https://github.com/seigo-gace/modular-catalog.git $Catalog
 if ($LASTEXITCODE -ne 0) {
-    throw "MODULECATALOG_FETCH_FAILED=$LASTEXITCODE"
+    throw "MODULECATALOG_CLONE_FAILED=$LASTEXITCODE"
 }
+git -C $Catalog config core.autocrlf false
 
 git -C $Catalog checkout --detach $CatalogCommit
 if ($LASTEXITCODE -ne 0) {
@@ -53,7 +51,7 @@ if ($actualCatalogCommit -ne $CatalogCommit) {
 }
 Write-Host "MODULECATALOG_PINNED=PASS COMMIT=$actualCatalogCommit"
 
-Write-Host '`n=== VERIFY WINDOWS MVS COMPATIBILITY ==='
+Write-Host "`n=== VERIFY WINDOWS MVS COMPATIBILITY ==="
 try {
     & $VerifyScript -Root $Root
 }
@@ -63,7 +61,7 @@ catch {
     & $VerifyScript -Root $Root
 }
 
-Write-Host '`n=== IMPORT VERIFIED DEBUGAI SKILLS ==='
+Write-Host "`n=== IMPORT VERIFIED DEBUGAI SKILLS ==="
 if (Test-Path $TrialRoot) {
     Remove-Item $TrialRoot -Recurse -Force
 }
@@ -91,7 +89,7 @@ if ($corpusCount -ne $ExpectedSkillCount) {
 }
 Write-Host "DEBUGAI_SKILL_DATA=PASS RECORDS=$recordCount CORPUS=$corpusCount"
 
-Write-Host '`n=== INITIALIZE ISOLATED TRIAL KB ==='
+Write-Host "`n=== INITIALIZE ISOLATED TRIAL KB ==="
 Push-Location $TrialRoot
 try {
     & $Mvs init --force --extensions .md --no-auto-index --no-mcp --no-auto-indexing
@@ -99,13 +97,13 @@ try {
         throw "DEBUGAI_SKILL_MVS_INIT_FAILED=$LASTEXITCODE"
     }
 
-    Write-Host '`n=== INDEX VERIFIED DEBUGAI SKILLS ==='
+    Write-Host "`n=== INDEX VERIFIED DEBUGAI SKILLS ==="
     & $Mvs index --force
     if ($LASTEXITCODE -ne 0) {
         throw "DEBUGAI_SKILL_MVS_INDEX_FAILED=$LASTEXITCODE"
     }
 
-    Write-Host '`n=== VERIFY INDEX STATUS ==='
+    Write-Host "`n=== VERIFY INDEX STATUS ==="
     $status = (& $Mvs status 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0) {
         throw "DEBUGAI_SKILL_MVS_STATUS_FAILED=$LASTEXITCODE"
@@ -119,7 +117,7 @@ finally {
     Pop-Location
 }
 
-Write-Host '`n=== REAL MCP RETRIEVAL: ALL 13 + NATURAL QUERIES ==='
+Write-Host "`n=== REAL MCP RETRIEVAL: ALL 13 + NATURAL QUERIES ==="
 & $RuntimePython -B $Probe `
     --python $RuntimePython `
     --project-root $TrialRoot `
@@ -129,7 +127,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "DEBUGAI_SKILL_MCP_E2E_FAILED=$LASTEXITCODE"
 }
 
-Write-Host '`n=== FINAL ==='
+Write-Host "`n=== FINAL ==="
 Write-Host "GACE_DEBUGAI_VERIFIED_SKILL_TRIAL=PASS SKILLS=$ExpectedSkillCount"
 Write-Host "PINNED_MODULECATALOG_COMMIT=$CatalogCommit"
 Write-Host "TRIAL_ROOT=$TrialRoot"
