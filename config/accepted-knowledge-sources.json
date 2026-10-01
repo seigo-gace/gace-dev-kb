@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "debugai-code-repair-verification-skill-pack",
+      "kind": "modulecatalog-exported-functions",
+      "repository": "seigo-gace/modular-catalog",
+      "commit": "bd258ec91b6970853d14a7bf4e65731312a487e3",
+      "assetId": "debugai-code-repair-verification-skill-pack",
+      "expectedSkillCount": 13,
+      "admission": "verified",
+      "validationBoundary": "ModuleCatalog normal/user evidence passed; DebugAI AI Core real-LLM Skill ON/OFF A/B is not claimed by this source"
+    }
+  ]
+}

@@ -43,10 +43,17 @@ def combine(paths: list[Path]) -> list[dict[str, str]]:
         raise ValueError("at least two knowledge-record inputs are required")
 
     combined: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for path in paths:
         for record in load_file(path):
-            key = (record["repository"], record["commit"], record["type"])
+            # Source is part of record identity. Multiple reusable skills can share
+            # one repository/commit/type while still being distinct knowledge.
+            key = (
+                record["repository"],
+                record["commit"],
+                record["type"],
+                record["source"],
+            )
             if key in seen:
                 continue
             seen.add(key)
