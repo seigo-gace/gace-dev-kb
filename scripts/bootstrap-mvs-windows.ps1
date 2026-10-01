@@ -26,8 +26,9 @@ $Main = Join-Path $Site 'cli\main.py'
 $Output = Join-Path $Site 'cli\output.py'
 $KnowledgeGraph = Join-Path $Site 'core\knowledge_graph.py'
 $ChunkProcessor = Join-Path $Site 'core\chunk_processor.py'
+$McpServer = Join-Path $Site 'mcp\server.py'
 
-foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor)) {
+foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor, $McpServer)) {
     if (-not (Test-Path $p)) { throw "MVS_SOURCE_NOT_FOUND=$p" }
 }
 
@@ -63,9 +64,6 @@ if ($outputText.Contains($needle) -and -not $outputText.Contains('if relevance_s
 $kgText = Get-Content $KnowledgeGraph -Raw
 $kgMarker = 'normalized_paths = [p.replace("\\", "/") for p in file_paths]'
 if (-not $kgText.Contains($kgMarker)) {
-    # Match the two upstream lines independent of CRLF/LF and indentation.
-    # This is intentionally narrow: only the file_paths -> escaped -> path_list
-    # block in delete_entities_for_files() is eligible for replacement.
     $kgPattern = '(?ms)^(?<indent>[ \t]*)escaped\s*=\s*\[p\.replace\([^\r\n]+\)\s+for\s+p\s+in\s+file_paths\]\r?\n\k<indent>path_list\s*=\s*[^\r\n]+$'
     $kgReplacement = @'
 ${indent}# G-ACE Windows compatibility: Kuzu inline string literals must not
@@ -89,8 +87,6 @@ if (-not $kgText.Contains($kgMarker)) {
 $chunkText = Get-Content $ChunkProcessor -Raw
 $spawnMarker = 'if sys.platform in {"darwin", "win32"}:'
 if (-not $chunkText.Contains($spawnMarker)) {
-    # Upstream 4.1.14 treats every non-macOS platform as Linux and requests
-    # multiprocessing context "fork". Windows supports "spawn", not "fork".
     $chunkPattern = '(?m)^(?<indent>[ \t]*)if\s+sys\.platform\s*==\s*["'']darwin["'']\s*:\s*$'
     $chunkReplacement = '${indent}if sys.platform in {"darwin", "win32"}:'
     $patchedChunkText = [regex]::Replace($chunkText, $chunkPattern, $chunkReplacement, 1)
@@ -105,6 +101,77 @@ if (-not $chunkText.Contains($spawnMarker)) {
     throw 'WINDOWS_MP_CONTEXT_PATCH_POSTCONDITION_FAILED'
 }
 
+# mcp-vector-search 4.1.14 still uses the MCP SDK 1.x decorator API
+# (server.list_tools()/server.call_tool()), while its dependency constraint
+# allows MCP SDK 2.x. MCP 2.x removed those decorators and accepts handlers in
+# the Server constructor. Adapt the installed OSS runtime without creating a
+# second MCP server implementation.
+$mcpText = Get-Content $McpServer -Raw
+$mcpMarker = 'on_list_tools=handle_list_tools'
+if (-not $mcpText.Contains($mcpMarker)) {
+    if ($mcpText -notmatch '(?m)^\s*ListToolsResult,\s*$') {
+        $mcpText = [regex]::Replace(
+            $mcpText,
+            '(?m)^(\s*)LoggingCapability,\s*$',
+            '${1}LoggingCapability,' + [Environment]::NewLine + '${1}ListToolsResult,',
+            1
+        )
+    }
+
+    $mcpFunctionPattern = '(?ms)^def create_mcp_server\(.*?^    return server\r?\n\r?\n\r?\n(?=async def run_mcp_server\()'
+    $mcpFunctionReplacement = @'
+def create_mcp_server(
+    project_root: Path | None = None, enable_file_watching: bool | None = None
+) -> Server:
+    """Create and configure the MCP server."""
+    mcp_server = MCPVectorSearchServer(project_root, enable_file_watching)
+
+    async def handle_list_tools(ctx, params):
+        return ListToolsResult(tools=mcp_server.get_tools())
+
+    async def handle_call_tool(ctx, params):
+        call_request = CallToolRequest(
+            params=CallToolRequestParams(
+                name=params.name, arguments=params.arguments or {}
+            )
+        )
+        return await mcp_server.call_tool(call_request)
+
+    server = Server(
+        "mcp-vector-search",
+        version="0.4.0",
+        on_list_tools=handle_list_tools,
+        on_call_tool=handle_call_tool,
+    )
+
+    server._mcp_server = mcp_server  # type: ignore[reportAttributeAccessIssue]
+    return server
+
+
+'@
+    $patchedMcpText = [regex]::Replace($mcpText, $mcpFunctionPattern, $mcpFunctionReplacement, 1)
+    if ($patchedMcpText -eq $mcpText) {
+        throw 'MCP_SDK2_SERVER_PATCH_TARGET_NOT_FOUND'
+    }
+
+    $patchedMcpText = [regex]::Replace(
+        $patchedMcpText,
+        '(?ms)^    # Create initialization options with proper capabilities\r?\n    init_options = InitializationOptions\(.*?^    \)\r?\n',
+        '    init_options = server.create_initialization_options()' + [Environment]::NewLine,
+        1
+    )
+
+    Set-Content $McpServer -Value $patchedMcpText -Encoding UTF8
+    $mcpText = $patchedMcpText
+}
+
+if (-not $mcpText.Contains($mcpMarker)) {
+    throw 'MCP_SDK2_SERVER_PATCH_POSTCONDITION_FAILED'
+}
+if (-not $mcpText.Contains('server.create_initialization_options()')) {
+    throw 'MCP_SDK2_INIT_OPTIONS_PATCH_POSTCONDITION_FAILED'
+}
+
 & $Mvs --help *> $null
 if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
 
@@ -115,7 +182,16 @@ $mpContext = (& $Py -c 'from mcp_vector_search.core.chunk_processor import _get_
 if ($LASTEXITCODE -ne 0) { throw "MVS_MP_CONTEXT_PROBE_FAILED=$LASTEXITCODE" }
 if ($mpContext -ne 'spawn') { throw "WINDOWS_MP_CONTEXT_NOT_SPAWN=$mpContext" }
 
+$mcpServerProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ($mcpServerProbe -join [Environment]::NewLine)
+    throw "MVS_MCP_SERVER_CREATE_PROBE_FAILED=$LASTEXITCODE"
+}
+$mcpServerType = ([string]$mcpServerProbe[-1]).Trim()
+if ($mcpServerType -ne 'Server') { throw "MVS_MCP_SERVER_TYPE_UNEXPECTED=$mcpServerType" }
+
 Write-Host 'MVS_WINDOWS_BOOTSTRAP=PASS'
 Write-Host "RUNTIME=$Runtime"
 Write-Host 'VERSION=4.1.14'
 Write-Host "MP_CONTEXT=$mpContext"
+Write-Host 'MCP_SDK2_COMPAT=PASS'
