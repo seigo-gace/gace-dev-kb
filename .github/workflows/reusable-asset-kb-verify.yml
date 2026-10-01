@@ -21,12 +21,42 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Syntax gates
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Python syntax gates
         run: |
           python -m py_compile \
             scripts/import_modulecatalog_reusable_export.py \
             scripts/import_reusable_asset_bundle.py \
             tests/mcp_reusable_asset_e2e.py
+
+      - name: Node syntax gate
+        run: node --check scripts/run_modulecatalog_reusable_export.mjs
+
+      - name: PowerShell syntax gates
+        shell: pwsh
+        run: |
+          $files = @(
+            'scripts/test-modulecatalog-reusable-export-windows.ps1',
+            'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              throw "POWERSHELL_PARSE_FAILED=$file"
+            }
+            Write-Host "POWERSHELL_PARSE=PASS FILE=$file"
+          }
 
       - name: Reusable export importer tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
