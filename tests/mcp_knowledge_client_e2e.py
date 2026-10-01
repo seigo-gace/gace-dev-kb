@@ -60,12 +60,23 @@ async def run_e2e(python: Path, project_root: Path, timeout: int) -> None:
             async with stdio_client(server, errlog=errlog) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     init_result = await with_timeout(session.initialize(), timeout, "MCP_INITIALIZE")
-                    server_info = getattr(init_result, "serverInfo", None)
-                    server_name = getattr(server_info, "name", "unknown") if server_info else "unknown"
-                    server_version = (
-                        getattr(server_info, "version", "unknown") if server_info else "unknown"
+                    # MCP SDK 2.x exposes snake_case Pydantic attributes while
+                    # serialized protocol fields remain camelCase. Support both
+                    # so the E2E reports the actual server metadata instead of
+                    # a client-side "unknown" display artifact.
+                    server_info = getattr(init_result, "server_info", None) or getattr(
+                        init_result, "serverInfo", None
                     )
-                    print(f"MCP_INITIALIZE=PASS SERVER={server_name} VERSION={server_version}")
+                    server_name = getattr(server_info, "name", None) if server_info else None
+                    server_version = (
+                        getattr(server_info, "version", None) if server_info else None
+                    )
+                    if not server_name or not server_version:
+                        raise RuntimeError("MCP_SERVER_INFO_MISSING")
+                    print(
+                        f"MCP_INITIALIZE=PASS SERVER={server_name} VERSION={server_version}"
+                    )
+                    print("MCP_SERVER_INFO=PASS")
 
                     tools_result = await with_timeout(session.list_tools(), timeout, "MCP_LIST_TOOLS")
                     tool_names = {tool.name for tool in tools_result.tools}
