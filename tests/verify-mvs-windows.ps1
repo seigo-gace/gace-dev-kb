@@ -12,9 +12,10 @@ $KnowledgeGraph = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\k
 $ChunkProcessor = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\chunk_processor.py'
 $Embeddings = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\embeddings.py'
 $Indexer = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\indexer.py'
+$SearchEngine = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\search.py'
 $McpServer = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\mcp\server.py'
 
-foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor,$Embeddings,$Indexer,$McpServer)) {
+foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor,$Embeddings,$Indexer,$SearchEngine,$McpServer)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
 
@@ -57,6 +58,17 @@ if ($indexerText -notmatch 'self\.vectors_backend\s*=\s*VectorsBackend\(lance_pa
     throw 'ATOMIC_BM25_VECTORS_REOPEN_MISSING'
 }
 
+$searchText = Get-Content $SearchEngine -Raw
+if ($searchText -notmatch 'G-ACE docs-only KG compatibility: no CodeEntity nodes means no code KG boost') {
+    throw 'DOC_ONLY_KG_ENHANCEMENT_PATCH_MISSING'
+}
+if ($searchText -notmatch 'kg_stats\s*=\s*await\s+self\._kg\.get_stats\(\)') {
+    throw 'DOC_ONLY_KG_STATS_GATE_MISSING'
+}
+if ($searchText -notmatch 'code_entities') {
+    throw 'DOC_ONLY_KG_CODE_ENTITY_GATE_MISSING'
+}
+
 $mpOutput = @(& $Py -c 'from mcp_vector_search.core.chunk_processor import _get_mp_context; print(_get_mp_context()._name)' 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "WINDOWS_MP_CONTEXT_PROBE_FAILED=$LASTEXITCODE" }
 $mpContext = ([string]$mpOutput[-1]).Trim()
@@ -96,4 +108,5 @@ Write-Host "MVS_WINDOWS_MP_CONTEXT=$mpContext"
 Write-Host 'MVS_MCP_SDK2_COMPAT=PASS'
 Write-Host 'MVS_EMBEDDING_DIMENSION_API=PASS'
 Write-Host 'MVS_ATOMIC_BM25_BACKEND_REOPEN=PASS'
+Write-Host 'MVS_DOC_ONLY_KG_ENHANCEMENT=PASS'
 Write-Host 'MVS_WINDOWS_COMPAT_VERIFY=PASS'
