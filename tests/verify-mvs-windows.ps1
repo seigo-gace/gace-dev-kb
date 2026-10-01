@@ -10,9 +10,11 @@ $Main = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\cli\main.py'
 $Output = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\cli\output.py'
 $KnowledgeGraph = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\knowledge_graph.py'
 $ChunkProcessor = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\chunk_processor.py'
+$Embeddings = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\embeddings.py'
+$Indexer = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\indexer.py'
 $McpServer = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\mcp\server.py'
 
-foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor,$McpServer)) {
+foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor,$Embeddings,$Indexer,$McpServer)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
 
@@ -37,6 +39,22 @@ if ($kgText -notmatch 'normalized_paths\s*=\s*\[p\.replace\("\\\\",\s*"/"\)\s+fo
 $chunkText = Get-Content $ChunkProcessor -Raw
 if ($chunkText -notmatch 'sys\.platform\s+in\s+\{["'']darwin["''],\s*["'']win32["'']\}') {
     throw 'WINDOWS_MP_CONTEXT_PATCH_MISSING'
+}
+
+$embeddingText = Get-Content $Embeddings -Raw
+if ($embeddingText -notmatch 'if hasattr\(self\.model,\s*["'']get_embedding_dimension["'']\):') {
+    throw 'EMBEDDING_DIMENSION_API_PATCH_MISSING'
+}
+
+$indexerText = Get-Content $Indexer -Raw
+if ($indexerText -notmatch 'G-ACE atomic rebuild compatibility: reopen final Lance paths before BM25') {
+    throw 'ATOMIC_BM25_BACKEND_REOPEN_PATCH_MISSING'
+}
+if ($indexerText -notmatch 'self\.chunks_backend\s*=\s*ChunksBackend\(lance_path\)') {
+    throw 'ATOMIC_BM25_CHUNKS_REOPEN_MISSING'
+}
+if ($indexerText -notmatch 'self\.vectors_backend\s*=\s*VectorsBackend\(lance_path\)') {
+    throw 'ATOMIC_BM25_VECTORS_REOPEN_MISSING'
 }
 
 $mpOutput = @(& $Py -c 'from mcp_vector_search.core.chunk_processor import _get_mp_context; print(_get_mp_context()._name)' 2>&1)
@@ -76,4 +94,6 @@ if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
 
 Write-Host "MVS_WINDOWS_MP_CONTEXT=$mpContext"
 Write-Host 'MVS_MCP_SDK2_COMPAT=PASS'
+Write-Host 'MVS_EMBEDDING_DIMENSION_API=PASS'
+Write-Host 'MVS_ATOMIC_BM25_BACKEND_REOPEN=PASS'
 Write-Host 'MVS_WINDOWS_COMPAT_VERIFY=PASS'
