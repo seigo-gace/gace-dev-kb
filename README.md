@@ -45,7 +45,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, repository regression, deterministic G-ACE knowledge adapter/export, generated Markdown corpus, dedicated generated-knowledge index, real MCP stdio server → MCP client handshake/tool calls, known-record MCP retrieval gates, and cross-repository reuse E2E have all passed on the Master Windows environment.
+`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, deterministic full-history G-ACE knowledge adapter/export, generated Markdown corpus, dedicated generated-knowledge index, persisted BM25 retention probe, real MCP stdio server → MCP client handshake/tool calls, known-record MCP retrieval gates, and cross-repository reuse E2E have all passed on the Master Windows environment.
 
 ## Initial knowledge contract
 
@@ -79,35 +79,58 @@ Only source, configuration, design, tests, and durable documentation belong in G
 
 ## Windows bootstrap and regression
 
-- `scripts/bootstrap-mvs-windows.ps1` installs pinned `mcp-vector-search==4.1.14` and applies the measured Windows/docs compatibility fixes, including Windows Kuzu-path handling, Windows multiprocessing `spawn`, and the measured MCP SDK 2.x server compatibility adaptation required by the installed dependency set.
-- `tests/verify-mvs-windows.ps1` verifies the installed compatibility state, CLI startup, actual multiprocessing context, and MCP server creation compatibility.
+- `scripts/bootstrap-mvs-windows.ps1` installs pinned `mcp-vector-search==4.1.14` and applies measured compatibility fixes for Windows/runtime defects, including Kuzu-path handling, Windows multiprocessing `spawn`, MCP SDK 2.x compatibility, embedding-dimension API compatibility, atomic BM25 backend reopen after rebuild, and doc-only KG search behavior.
+- `tests/verify-mvs-windows.ps1` verifies the installed compatibility state, CLI startup, actual multiprocessing context, MCP server creation compatibility, and each repository-managed compatibility patch.
 - `tests/regression-mvs-windows.ps1` performs the tracked KB corpus full reindex, knowledge-graph build, status check, and two semantic retrieval regressions. It temporarily isolates the regression from a local `.gitignore` by changing `respect_gitignore`, then restores the prior value.
 
 ## G-ACE knowledge adapter and generated search corpus
 
-- `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority.
-- `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, and JSONL contract output. Master Windows result: 5 tests, all PASS.
+- `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority. The durable default is all commits reachable from the requested revision; bounded `--max-count` is explicit test/temporary behavior only.
+- `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, JSONL contract output, and full-history retention semantics.
 - `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`.
 - `scripts/render_knowledge_corpus.py` turns JSONL records into deterministic Markdown documents suitable for semantic indexing without synthesizing missing evidence.
 - `tests/test_render_knowledge_corpus.py` validates renderer behavior. Master Windows result: 2 tests, all PASS.
-- `scripts/index-knowledge-windows.ps1` self-verifies/repairs Windows MVS compatibility, exports records, renders the generated corpus, initializes/reuses `F:\G-ACE-KB\data\knowledge-search`, indexes it with `mcp-vector-search`, verifies exact indexed-file count, and proves retrieval of two known historical records.
+- `tests/bm25_knowledge_retention_probe.py` loads the persisted BM25 index directly, searches a full commit ID, resolves the returned LanceDB chunk, and verifies that the indexed content contains the expected commit evidence.
+- `scripts/index-knowledge-windows.ps1` self-verifies/repairs Windows MVS compatibility, exports full repository history, renders the generated corpus, indexes it with `mcp-vector-search`, verifies exact indexed-file count and BM25 persistence, proves direct BM25 retention of two known historical records, and fails closed on the previously observed BM25/embedding/KG warning regressions.
+
+Latest Master Windows generated-knowledge result:
+
+```text
+GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS RECORDS=89 MODE=FULL_HISTORY
+GACE_KNOWLEDGE_HISTORY_RETENTION=PASS COMMIT=74e8171
+GACE_KNOWLEDGE_HISTORY_RETENTION=PASS COMMIT=4912a442
+Reindex complete: 89 files, 625 chunks, 625 embeddings
+Knowledge graph: 534 entities / 533 relationships
+MVS_BM25_INDEX=PASS
+GACE_BM25_KNOWLEDGE_PROBE=PASS LABEL=WINDOWS_KUZU_FIX COMMIT=74e81717 RESULTS=1
+GACE_BM25_KNOWLEDGE_PROBE=PASS LABEL=GACE_ADAPTER COMMIT=4912a442 RESULTS=1
+MVS_BM25_WARNING_REGRESSION=PASS
+MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS
+MVS_DOC_ONLY_KG_WARNING_REGRESSION=PASS
+GACE_KNOWLEDGE_INDEX=PASS RECORDS=89
+```
 
 ## MCP client E2E
 
-- `tests/mcp_knowledge_client_e2e.py` launches the installed `mcp-vector-search` MCP server over stdio, performs the MCP initialize/list-tools handshake, calls `get_project_status`, and retrieves the known Kuzu compatibility and G-ACE adapter records through the real `search_code` MCP tool.
+- `tests/mcp_knowledge_client_e2e.py` launches the installed `mcp-vector-search` MCP server over stdio, performs the MCP initialize/list-tools handshake, validates server metadata, calls `get_project_status`, and retrieves the known Kuzu compatibility and G-ACE adapter records through the real `search_code` MCP tool.
 - `scripts/test-mcp-knowledge-e2e-windows.ps1` runs that client E2E against the generated knowledge-search project in one Windows command.
 
-Master Windows result:
+Latest Master Windows result:
 
 ```text
 MVS_WINDOWS_MP_CONTEXT=spawn
 MVS_MCP_SDK2_COMPAT=PASS
+MVS_EMBEDDING_DIMENSION_API=PASS
+MVS_ATOMIC_BM25_BACKEND_REOPEN=PASS
+MVS_DOC_ONLY_KG_ENHANCEMENT=PASS
 MVS_WINDOWS_COMPAT_VERIFY=PASS
-MCP_INITIALIZE=PASS
+MCP_INITIALIZE=PASS SERVER=mcp-vector-search VERSION=0.4.0
+MCP_SERVER_INFO=PASS
 MCP_LIST_TOOLS=PASS COUNT=28
 MCP_PROJECT_STATUS=PASS
-MCP_SEARCH_KUZU=PASS COMMIT=74e8171
-MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442
+MCP_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25
+MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25
+MCP_DOC_ONLY_KG_WARNING_REGRESSION=PASS
 GACE_MCP_CLIENT_E2E=PASS
 GACE_MCP_WINDOWS_E2E=PASS
 ```
@@ -133,22 +156,30 @@ CROSS_REPO_TEMP_CLEANUP=PASS
 
 ## Current status
 
-**FIRST-VERSION REPOSITORY → KNOWLEDGE → INDEX → MCP → CROSS-REPOSITORY REUSE E2E VALIDATED ON MASTER WINDOWS**
+**FIRST-VERSION REPOSITORY → FULL-HISTORY KNOWLEDGE → INDEX/BM25 → MCP → CROSS-REPOSITORY REUSE E2E VALIDATED ON MASTER WINDOWS**
 
 Validated on the Master Windows environment:
 
 - `mcp-vector-search` 4.1.14 isolated runtime;
-- repository-managed Windows bootstrap and compatibility verifier: PASS;
+- repository-managed Windows compatibility verifier: PASS;
 - Windows multiprocessing context: `spawn`;
-- MCP SDK 2.x server compatibility probe: PASS;
-- repository tracked-corpus reindex: 4 files / 161 chunks / 161 embeddings;
-- repository knowledge graph: 58 entities / 57 relationships;
-- repository semantic design and failure/root-cause/fix/validation retrieval: PASS;
-- real repository regression marker: `MVS_REAL_REGRESSION=PASS`;
-- adapter unit tests: 5/5 PASS;
-- renderer unit tests: 2/2 PASS;
-- generated knowledge export/index/retrieval: PASS;
-- real MCP stdio initialize/list-tools/status/search E2E: PASS;
+- MCP SDK 2.x compatibility: PASS;
+- embedding dimension API compatibility: PASS;
+- atomic BM25 backend reopen compatibility: PASS;
+- doc-only KG search compatibility: PASS;
+- repository tracked-corpus regression: PASS;
+- deterministic adapter/renderer/combiner tests: PASS;
+- durable knowledge export defaults to full reachable Git history;
+- latest generated knowledge corpus: 89 records;
+- latest generated knowledge index: 89/89 files, 625 chunks, 625 embeddings;
+- latest generated knowledge graph: 534 entities / 533 relationships;
+- persisted BM25 index: PASS;
+- direct BM25 retrieval of historical Kuzu knowledge `74e8171...`: PASS;
+- direct BM25 retrieval of historical adapter knowledge `4912a442...`: PASS;
+- BM25 fallback warning regression gate: PASS;
+- embedding `FutureWarning` regression gate: PASS;
+- doc-only KG entity-warning regression gate: PASS;
+- real MCP stdio initialize/server-info/list-tools/status/search E2E: PASS;
 - real MCP Kuzu and adapter retrieval gates: PASS;
 - deterministic multi-repository combiner tests: 3/3 PASS;
 - cross-repository combined corpus: 90 records;
@@ -159,15 +190,9 @@ Validated on the Master Windows environment:
 - final cross-repository marker: `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2`;
 - temporary cross-repository workspace cleanup: PASS.
 
-Observed non-blocking evidence retained for follow-up instead of being silently hidden:
+Local-only evidence intentionally left untouched:
 
-- BM25 index build warning causes hybrid search to fall back to vector-only mode;
-- semantic searches can emit entity-matching warnings while still returning the required records;
-- the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
-- MCP initialization client display can report server name/version as `unknown` even though protocol initialization succeeds;
-- local `.gitignore` remains untracked and is not modified by repository automation;
-- the pre-existing local `scripts/__pycache__/` remains untouched; current tests disable new bytecode generation.
+- `.gitignore` remains untracked;
+- the pre-existing local `scripts/__pycache__/` remains untracked.
 
-The first-version repository knowledge reuse E2E is complete. The next work in this repository is measured quality hardening of the retained OSS/runtime warnings and regressions. Knowledge-data processing/admission from TGserver is intentionally outside this repository's current scope and will be developed separately before integration.
-
-Do not report unresolved warning classes as fixed until exact runtime evidence closes them.
+The first-version repository knowledge reuse E2E and the measured Windows quality-hardening boundary are complete. Knowledge-data processing/admission from TGserver is intentionally outside this repository's current scope and will be developed separately before integration.
