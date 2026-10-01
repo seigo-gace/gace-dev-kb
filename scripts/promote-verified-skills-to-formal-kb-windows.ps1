@@ -8,11 +8,12 @@ $ErrorActionPreference = 'Stop'
 
 $Repo = Join-Path $Root 'repo'
 $IndexScript = Join-Path $Repo 'scripts\index-knowledge-windows.ps1'
+$Importer = Join-Path $Repo 'scripts\import_verified_modulecatalog_skills.py'
 $CombineTest = Join-Path $Repo 'tests\test_combine_knowledge_records.py'
 $ImportTest = Join-Path $Repo 'tests\test_import_verified_modulecatalog_skills.py'
 $AcceptedConfig = Join-Path $Repo 'config\accepted-knowledge-sources.json'
 
-foreach ($path in @($Repo,$Python,$IndexScript,$CombineTest,$ImportTest,$AcceptedConfig)) {
+foreach ($path in @($Repo,$Python,$IndexScript,$Importer,$CombineTest,$ImportTest,$AcceptedConfig)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -57,17 +58,17 @@ foreach ($source in $sources) {
 }
 Write-Host "ACCEPTED_SOURCE_REGISTRY=PASS SOURCES=$($sources.Count)"
 
-# The ModuleCatalog manifests hash canonical Git blob bytes (LF). A Windows clone
-# with core.autocrlf=true rewrites text files to CRLF and makes otherwise-valid
-# manifest size/hash checks fail. Pin each accepted source with autocrlf disabled
-# before the formal index step, then force a hard reset so the working tree bytes
-# exactly match the pinned Git commit that the manifest describes.
+# ModuleCatalog manifests hash canonical Git blob bytes (LF). On Windows,
+# core.autocrlf=true rewrites text files to CRLF and causes false manifest
+# size/hash failures. Canonicalize every accepted source before promotion.
 Write-Host '=== PREPARE CANONICAL ACCEPTED SOURCE CHECKOUTS ==='
 foreach ($source in $sources) {
     $sourceId = [string]$source.id
     $repository = [string]$source.repository
     $commit = [string]$source.commit
-    if (-not $sourceId -or -not $repository -or -not $commit) {
+    $assetId = [string]$source.assetId
+    $expectedCount = [int]$source.expectedSkillCount
+    if (-not $sourceId -or -not $repository -or -not $commit -or -not $assetId -or $expectedCount -lt 1) {
         throw "ACCEPTED_SOURCE_INVALID=$sourceId"
     }
 
@@ -102,7 +103,29 @@ foreach ($source in $sources) {
         throw "ACCEPTED_SOURCE_AUTOCRLF_NOT_DISABLED id=$sourceId actual=$autoCrlf"
     }
 
+    $preflightRoot = Join-Path $env:TEMP ("gace-kb-accepted-preflight-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $preflightRoot -Force | Out-Null
+        & $Python -B $Importer `
+            --catalog-root $catalogRoot `
+            --asset-id $assetId `
+            --output-root $preflightRoot `
+            --expected-skill-count $expectedCount
+        if ($LASTEXITCODE -ne 0) {
+            throw "ACCEPTED_SOURCE_MANIFEST_PREFLIGHT_FAILED=$sourceId"
+        }
+
+        $preflightRecords = @(Get-Content (Join-Path $preflightRoot 'knowledge-records.jsonl') | Where-Object { $_.Trim() }).Count
+        if ($preflightRecords -ne $expectedCount) {
+            throw "ACCEPTED_SOURCE_PREFLIGHT_COUNT_MISMATCH id=$sourceId actual=$preflightRecords expected=$expectedCount"
+        }
+    }
+    finally {
+        Remove-Item $preflightRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     Write-Host "ACCEPTED_SOURCE_CANONICAL_CHECKOUT=PASS ID=$sourceId COMMIT=$actualCommit AUTOCRLF=$autoCrlf"
+    Write-Host "ACCEPTED_SOURCE_MANIFEST_PREFLIGHT=PASS ID=$sourceId RECORDS=$expectedCount"
 }
 
 Write-Host '=== STATIC/UNIT REGRESSION ==='
