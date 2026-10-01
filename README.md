@@ -61,7 +61,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, and semantic retrieval regression have passed on the Master Windows environment. MCP client E2E and automatic projection/indexing of G-ACE knowledge records remain incomplete.
+`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, semantic retrieval regression, deterministic G-ACE knowledge adapter tests, and real JSONL export have passed on the Master Windows environment. Automatic generated-record indexing into a dedicated `mcp-vector-search` knowledge corpus is now implemented in source and awaits Master Windows validation. MCP client E2E remains incomplete.
 
 ## Initial knowledge contract
 
@@ -85,7 +85,7 @@ Primary local root:
 ```text
 F:\G-ACE-KB
 ├─ repo\       # this repository
-├─ data\       # local KB/index data and generated knowledge records
+├─ data\       # generated knowledge records/corpus/index data
 ├─ runtime\    # OSS runtime
 ├─ assets\     # migration/input assets
 └─ .venv\      # local environment from preparation
@@ -99,19 +99,18 @@ Only source, configuration, design, tests, and durable documentation belong in G
 - `tests/verify-mvs-windows.ps1` verifies the installed compatibility state and CLI startup.
 - `tests/regression-mvs-windows.ps1` performs the tracked KB corpus full reindex, knowledge-graph build, status check, and the two required semantic retrieval regressions. It temporarily isolates the regression from a local `.gitignore` by changing `respect_gitignore`, then restores the prior value.
 
-## G-ACE knowledge adapter
+## G-ACE knowledge adapter and generated search corpus
 
-The active feature branch now contains the first deterministic repository-to-record adapter source:
-
-- `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority;
-- `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, and JSONL contract output;
-- `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`.
-
-This source is implemented but is **not yet Windows runtime PASS** until the adapter test and real export are executed on the Master Windows environment.
+- `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority.
+- `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, and JSONL contract output. Master Windows result: 5 tests, all PASS.
+- `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`. Master Windows real export: 36 records, PASS.
+- `scripts/render_knowledge_corpus.py` turns JSONL records into deterministic Markdown documents suitable for semantic indexing without synthesizing missing evidence.
+- `tests/test_render_knowledge_corpus.py` validates renderer behavior; Master Windows execution is pending.
+- `scripts/index-knowledge-windows.ps1` exports, renders, initializes/reuses `F:\G-ACE-KB\data\knowledge-search`, indexes the generated corpus with `mcp-vector-search`, checks indexed-file count, and verifies retrieval of two known historical records. Source is implemented; Master Windows runtime validation is pending.
 
 ## Current status
 
-**OSS SEARCH CORE + REPOSITORY-MANAGED WINDOWS REGRESSION VALIDATED / G-ACE ADAPTER SOURCE IMPLEMENTED, REAL EXPORT PENDING**
+**OSS SEARCH CORE + WINDOWS REGRESSION + G-ACE ADAPTER/EXPORT VALIDATED / GENERATED KNOWLEDGE INDEX SOURCE IMPLEMENTED, RUNTIME VALIDATION PENDING**
 
 Validated on the Master Windows environment:
 
@@ -123,25 +122,29 @@ Validated on the Master Windows environment:
 - knowledge graph build: 58 entities / 57 relationships;
 - status: 4/4 indexed, version 4.1.14;
 - semantic design query returned `CURRENT_DESIGN.md` first;
-- semantic failure/root-cause/fix/validation query returned the expected repository knowledge;
+- semantic failure/root-cause/fix/validation query returned expected repository knowledge;
 - real Windows regression marker: `MVS_REAL_REGRESSION=PASS`;
-- `respect_gitignore` was restored to its original `true` value after the regression.
+- `respect_gitignore` restored to its original `true` value after regression;
+- adapter unit tests: 5/5 PASS;
+- real adapter export: `GACE_KNOWLEDGE_EXPORT=PASS`, 36 records;
+- Windows export wrapper: `GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS`, 36 records.
 
 Observed non-blocking evidence retained for follow-up instead of being silently hidden:
 
-- BM25 index build warning caused hybrid search to fall back to vector-only mode during the validated regression;
+- BM25 index build warning caused hybrid search to fall back to vector-only mode during the repository regression;
 - semantic searches emitted entity-matching warnings while still returning the required results;
-- the local `.gitignore` remains untracked and is not modified by the repository automation.
+- local `.gitignore` remains untracked and is not modified by repository automation;
+- the first adapter test run created local `scripts/__pycache__/`; future test execution disables bytecode generation, but the existing local cache has not been deleted by repository automation.
 
 Implemented on the active feature branch, not yet Windows-runtime validated:
 
-- deterministic G-ACE Git repository → knowledge-record adapter;
-- Windows wrapper exporting records outside Git source.
+- deterministic JSONL → Markdown knowledge-corpus renderer;
+- generated-record → dedicated `mcp-vector-search` knowledge-index pipeline;
+- renderer tests and two-record semantic retrieval gate.
 
 Not yet completed:
 
-- Windows real-runtime adapter unit test and export validation;
-- automatic generated-record → `mcp-vector-search` indexing;
+- Windows real-runtime generated knowledge corpus/index/retrieval PASS;
 - MCP server → AI client E2E validation;
 - cross-repository knowledge reuse E2E.
 
