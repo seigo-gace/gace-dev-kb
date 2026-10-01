@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 
+sys.dont_write_bytecode = True
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = REPO_ROOT / "scripts" / "gace_knowledge_adapter.py"
 spec = importlib.util.spec_from_file_location("gace_knowledge_adapter", ADAPTER_PATH)
