@@ -60,20 +60,29 @@ if ($outputText.Contains($needle) -and -not $outputText.Contains('if relevance_s
 }
 
 $kgText = Get-Content $KnowledgeGraph -Raw
-$kgNeedle = @'
-        escaped = [p.replace("'", "\\'") for p in file_paths]
-        path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
+$kgMarker = 'normalized_paths = [p.replace("\\", "/") for p in file_paths]'
+if (-not $kgText.Contains($kgMarker)) {
+    # Match the two upstream lines independent of CRLF/LF and indentation.
+    # This is intentionally narrow: only the file_paths -> escaped -> path_list
+    # block in delete_entities_for_files() is eligible for replacement.
+    $kgPattern = '(?ms)^(?<indent>[ \t]*)escaped\s*=\s*\[p\.replace\([^\r\n]+\)\s+for\s+p\s+in\s+file_paths\]\r?\n\k<indent>path_list\s*=\s*[^\r\n]+$'
+    $kgReplacement = @'
+${indent}# G-ACE Windows compatibility: Kuzu inline string literals must not
+${indent}# receive Windows backslash-separated relative paths.
+${indent}normalized_paths = [p.replace("\\", "/") for p in file_paths]
+${indent}escaped = [p.replace("'", "\\'") for p in normalized_paths]
+${indent}path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
 '@
-$kgReplacement = @'
-        # G-ACE Windows compatibility: Kuzu inline string literals must not
-        # receive Windows backslash-separated relative paths.
-        normalized_paths = [p.replace("\\", "/") for p in file_paths]
-        escaped = [p.replace("'", "\\'") for p in normalized_paths]
-        path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
-'@
-if ($kgText.Contains($kgNeedle) -and -not $kgText.Contains('normalized_paths = [p.replace("\\", "/") for p in file_paths]')) {
-    $kgText = $kgText.Replace($kgNeedle, $kgReplacement)
-    Set-Content $KnowledgeGraph -Value $kgText -Encoding UTF8
+    $patchedKgText = [regex]::Replace($kgText, $kgPattern, $kgReplacement, 1)
+    if ($patchedKgText -eq $kgText) {
+        throw 'KUZU_PATH_PATCH_TARGET_NOT_FOUND'
+    }
+    Set-Content $KnowledgeGraph -Value $patchedKgText -Encoding UTF8
+    $kgText = $patchedKgText
+}
+
+if (-not $kgText.Contains($kgMarker)) {
+    throw 'KUZU_PATH_PATCH_POSTCONDITION_FAILED'
 }
 
 & $Mvs --help *> $null
