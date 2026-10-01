@@ -1,7 +1,7 @@
 param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
-    [int]$MaxCount = 50
+    [int]$MaxCount = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,10 +16,14 @@ $Jsonl = Join-Path $Root 'data\knowledge-records\gace-dev-kb.jsonl'
 $SearchRoot = Join-Path $Root 'data\knowledge-search'
 $Corpus = Join-Path $SearchRoot 'records'
 $Config = Join-Path $SearchRoot '.mcp-vector-search\config.json'
+$Bm25Index = Join-Path $SearchRoot '.mcp-vector-search\bm25_index.pkl'
+$KnownKuzuCommit = '74e81717473b500642c565bfd228409d59151789'
+$KnownAdapterCommit = '4912a442fc44be5fd2bd8e8796af8bd807e954c8'
 
 foreach ($p in @($Python, $Repo, $Mvs, $ExportScript, $Renderer, $BootstrapScript, $VerifyScript)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
+if ($MaxCount -lt 0) { throw "MAX_COUNT_INVALID=$MaxCount" }
 
 function Invoke-MvsCapture {
     param(
@@ -98,6 +102,9 @@ function Assert-NoClosedWarningRegression {
     if ($Output -match 'get_sentence_embedding_dimension') {
         throw "EMBEDDING_DIMENSION_FUTUREWARNING_PRESENT STAGE=$Stage"
     }
+    if ($Output -match 'Could not find entity matching') {
+        throw "DOC_ONLY_KG_ENTITY_WARNING_PRESENT STAGE=$Stage"
+    }
 }
 
 Write-Host '=== VERIFY WINDOWS MVS COMPATIBILITY ==='
@@ -117,9 +124,19 @@ Write-Host '=== EXPORT KNOWLEDGE ==='
 if ($LASTEXITCODE -ne 0) { throw "KNOWLEDGE_EXPORT_FAILED=$LASTEXITCODE" }
 if (-not (Test-Path $Jsonl)) { throw "KNOWLEDGE_JSONL_MISSING=$Jsonl" }
 
-$recordCount = @(Get-Content $Jsonl | Where-Object { $_.Trim() }).Count
+$records = @(Get-Content $Jsonl | Where-Object { $_.Trim() })
+$recordCount = $records.Count
 if ($recordCount -lt 1) { throw 'KNOWLEDGE_RECORD_COUNT_ZERO' }
+$knowledgeText = $records -join "`n"
+if (-not $knowledgeText.Contains($KnownKuzuCommit)) {
+    throw "KNOWLEDGE_HISTORY_RETENTION_MISSING=$KnownKuzuCommit"
+}
+if (-not $knowledgeText.Contains($KnownAdapterCommit)) {
+    throw "KNOWLEDGE_HISTORY_RETENTION_MISSING=$KnownAdapterCommit"
+}
 Write-Host "KNOWLEDGE_RECORDS=$recordCount"
+Write-Host 'GACE_KNOWLEDGE_HISTORY_RETENTION=PASS COMMIT=74e8171'
+Write-Host 'GACE_KNOWLEDGE_HISTORY_RETENTION=PASS COMMIT=4912a442'
 
 Write-Host '=== RENDER SEARCH CORPUS ==='
 New-Item -ItemType Directory -Path $SearchRoot -Force | Out-Null
@@ -147,6 +164,8 @@ Assert-NoClosedWarningRegression -Output $indexResult.Output -Stage 'index'
 if ($indexResult.Output -match "cannot find context for 'fork'") { throw 'WINDOWS_FORK_CONTEXT_ERROR_PRESENT' }
 if ($indexResult.Output -notmatch 'Reindex complete:') { throw 'KNOWLEDGE_INDEX_COMPLETION_MARKER_MISSING' }
 if ($indexResult.Output -match 'Reindex complete:\s*0 files,\s*0 chunks') { throw 'KNOWLEDGE_INDEX_ZERO_CORPUS' }
+if (-not (Test-Path $Bm25Index)) { throw "BM25_INDEX_MISSING=$Bm25Index" }
+Write-Host "MVS_BM25_INDEX=PASS PATH=$Bm25Index"
 
 Write-Host '=== KNOWLEDGE SEARCH STATUS ==='
 $statusResult = Invoke-MvsCapture -Arguments @('status') -WorkingDirectory $SearchRoot -TimeoutSeconds 120
@@ -156,25 +175,38 @@ if ($statusResult.Output -notmatch "Indexed Files:\s+$recordCount/$recordCount")
     throw "KNOWLEDGE_STATUS_COUNT_MISMATCH expected=$recordCount"
 }
 
+$deterministicSearchOptions = @(
+    '--limit','50',
+    '--search-mode','bm25',
+    '--no-expand',
+    '--no-rerank',
+    '--no-mmr',
+    '--quality-weight','0',
+    '--no-daemon'
+)
+
 Write-Host '=== SEARCH WINDOWS KUZU FIX ==='
 $kuzuResult = Invoke-MvsCapture `
-    -Arguments @('search','normalize Windows paths Kuzu graph cleanup') `
+    -Arguments (@('search','normalize Windows paths for Kuzu graph cleanup') + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 if ($kuzuResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_KUZU_FAILED=$($kuzuResult.ExitCode)" }
 Assert-NoClosedWarningRegression -Output $kuzuResult.Output -Stage 'search-kuzu'
 if ($kuzuResult.Output -notmatch '74e8171') { throw 'KNOWLEDGE_SEARCH_KUZU_RECORD_MISSING' }
+Write-Host 'KNOWLEDGE_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25'
 
 Write-Host '=== SEARCH G-ACE ADAPTER ==='
 $adapterResult = Invoke-MvsCapture `
-    -Arguments @('search','deterministic G-ACE repository knowledge adapter') `
+    -Arguments (@('search','deterministic G-ACE repository knowledge adapter') + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 if ($adapterResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_ADAPTER_FAILED=$($adapterResult.ExitCode)" }
 Assert-NoClosedWarningRegression -Output $adapterResult.Output -Stage 'search-adapter'
 if ($adapterResult.Output -notmatch '4912a442') { throw 'KNOWLEDGE_SEARCH_ADAPTER_RECORD_MISSING' }
+Write-Host 'KNOWLEDGE_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25'
 
 Write-Host 'MVS_BM25_WARNING_REGRESSION=PASS'
 Write-Host 'MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS'
+Write-Host 'MVS_DOC_ONLY_KG_WARNING_REGRESSION=PASS'
 Write-Host "GACE_KNOWLEDGE_INDEX=PASS RECORDS=$recordCount"
 Write-Host "SEARCH_ROOT=$SearchRoot"
