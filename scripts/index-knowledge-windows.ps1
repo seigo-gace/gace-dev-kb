@@ -10,12 +10,14 @@ $Repo = Join-Path $Root 'repo'
 $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
 $ExportScript = Join-Path $Repo 'scripts\export-knowledge-windows.ps1'
 $Renderer = Join-Path $Repo 'scripts\render_knowledge_corpus.py'
+$BootstrapScript = Join-Path $Repo 'scripts\bootstrap-mvs-windows.ps1'
+$VerifyScript = Join-Path $Repo 'tests\verify-mvs-windows.ps1'
 $Jsonl = Join-Path $Root 'data\knowledge-records\gace-dev-kb.jsonl'
 $SearchRoot = Join-Path $Root 'data\knowledge-search'
 $Corpus = Join-Path $SearchRoot 'records'
 $Config = Join-Path $SearchRoot '.mcp-vector-search\config.json'
 
-foreach ($p in @($Python, $Repo, $Mvs, $ExportScript, $Renderer)) {
+foreach ($p in @($Python, $Repo, $Mvs, $ExportScript, $Renderer, $BootstrapScript, $VerifyScript)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
 
@@ -81,6 +83,18 @@ function Invoke-MvsCapture {
     }
 }
 
+Write-Host '=== VERIFY WINDOWS MVS COMPATIBILITY ==='
+try {
+    & $VerifyScript -Root $Root
+}
+catch {
+    Write-Host "COMPAT_VERIFY_NEEDS_REPAIR=$($_.Exception.Message)"
+    Write-Host '=== REPAIR WINDOWS MVS COMPATIBILITY ==='
+    & $BootstrapScript -Root $Root -Python $Python
+    Write-Host '=== REVERIFY WINDOWS MVS COMPATIBILITY ==='
+    & $VerifyScript -Root $Root
+}
+
 Write-Host '=== EXPORT KNOWLEDGE ==='
 & $ExportScript -Root $Root -Python $Python -MaxCount $MaxCount
 if ($LASTEXITCODE -ne 0) { throw "KNOWLEDGE_EXPORT_FAILED=$LASTEXITCODE" }
@@ -92,7 +106,7 @@ Write-Host "KNOWLEDGE_RECORDS=$recordCount"
 
 Write-Host '=== RENDER SEARCH CORPUS ==='
 New-Item -ItemType Directory -Path $SearchRoot -Force | Out-Null
-& $Python $Renderer --input $Jsonl --output-dir $Corpus
+& $Python -B $Renderer --input $Jsonl --output-dir $Corpus
 if ($LASTEXITCODE -ne 0) { throw "KNOWLEDGE_CORPUS_RENDER_FAILED=$LASTEXITCODE" }
 $corpusCount = @(Get-ChildItem $Corpus -Filter '*.md' -File).Count
 if ($corpusCount -ne $recordCount) {
@@ -111,6 +125,7 @@ if (-not (Test-Path $Config)) {
 Write-Host '=== INDEX KNOWLEDGE CORPUS ==='
 $indexResult = Invoke-MvsCapture -Arguments @('index','--force') -WorkingDirectory $SearchRoot -TimeoutSeconds 600
 if ($indexResult.ExitCode -ne 0) { throw "KNOWLEDGE_MVS_INDEX_FAILED=$($indexResult.ExitCode)" }
+if ($indexResult.Output -match "cannot find context for 'fork'") { throw 'WINDOWS_FORK_CONTEXT_ERROR_PRESENT' }
 if ($indexResult.Output -notmatch 'Reindex complete:') { throw 'KNOWLEDGE_INDEX_COMPLETION_MARKER_MISSING' }
 if ($indexResult.Output -match 'Reindex complete:\s*0 files,\s*0 chunks') { throw 'KNOWLEDGE_INDEX_ZERO_CORPUS' }
 
