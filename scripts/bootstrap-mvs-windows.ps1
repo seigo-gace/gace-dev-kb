@@ -25,8 +25,9 @@ $Site = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search'
 $Main = Join-Path $Site 'cli\main.py'
 $Output = Join-Path $Site 'cli\output.py'
 $KnowledgeGraph = Join-Path $Site 'core\knowledge_graph.py'
+$ChunkProcessor = Join-Path $Site 'core\chunk_processor.py'
 
-foreach ($p in @($Main, $Output, $KnowledgeGraph)) {
+foreach ($p in @($Main, $Output, $KnowledgeGraph, $ChunkProcessor)) {
     if (-not (Test-Path $p)) { throw "MVS_SOURCE_NOT_FOUND=$p" }
 }
 
@@ -85,12 +86,36 @@ if (-not $kgText.Contains($kgMarker)) {
     throw 'KUZU_PATH_PATCH_POSTCONDITION_FAILED'
 }
 
+$chunkText = Get-Content $ChunkProcessor -Raw
+$spawnMarker = 'if sys.platform in {"darwin", "win32"}:'
+if (-not $chunkText.Contains($spawnMarker)) {
+    # Upstream 4.1.14 treats every non-macOS platform as Linux and requests
+    # multiprocessing context "fork". Windows supports "spawn", not "fork".
+    $chunkPattern = '(?m)^(?<indent>[ \t]*)if\s+sys\.platform\s*==\s*["'']darwin["'']\s*:\s*$'
+    $chunkReplacement = '${indent}if sys.platform in {"darwin", "win32"}:'
+    $patchedChunkText = [regex]::Replace($chunkText, $chunkPattern, $chunkReplacement, 1)
+    if ($patchedChunkText -eq $chunkText) {
+        throw 'WINDOWS_MP_CONTEXT_PATCH_TARGET_NOT_FOUND'
+    }
+    Set-Content $ChunkProcessor -Value $patchedChunkText -Encoding UTF8
+    $chunkText = $patchedChunkText
+}
+
+if (-not $chunkText.Contains($spawnMarker)) {
+    throw 'WINDOWS_MP_CONTEXT_PATCH_POSTCONDITION_FAILED'
+}
+
 & $Mvs --help *> $null
 if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
 
 & $Mvs doctor
 if ($LASTEXITCODE -ne 0) { throw "MVS_DOCTOR_FAILED=$LASTEXITCODE" }
 
+$mpContext = (& $Py -c 'from mcp_vector_search.core.chunk_processor import _get_mp_context; print(_get_mp_context()._name)' 2>&1 | Select-Object -Last 1).ToString().Trim()
+if ($LASTEXITCODE -ne 0) { throw "MVS_MP_CONTEXT_PROBE_FAILED=$LASTEXITCODE" }
+if ($mpContext -ne 'spawn') { throw "WINDOWS_MP_CONTEXT_NOT_SPAWN=$mpContext" }
+
 Write-Host 'MVS_WINDOWS_BOOTSTRAP=PASS'
 Write-Host "RUNTIME=$Runtime"
 Write-Host 'VERSION=4.1.14'
+Write-Host "MP_CONTEXT=$mpContext"
