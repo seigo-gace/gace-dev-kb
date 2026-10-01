@@ -66,7 +66,7 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, repository regression, deterministic repository-to-record adaptation, generated knowledge-corpus indexing, direct semantic retrieval, and real MCP stdio client retrieval have passed on the Master Windows environment. The remaining first-version runtime gate is proving the same reuse path with records from more than one repository.
+`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, repository regression, deterministic repository-to-record adaptation, generated knowledge-corpus indexing, direct semantic retrieval, real MCP stdio client retrieval, and cross-repository reuse have passed on the Master Windows environment.
 
 ## 6. G-ACE repository / knowledge adapter boundary
 
@@ -126,6 +126,8 @@ Git stores source, configuration, design, tests, and durable documentation. Larg
 
 Cross-repository E2E uses a temporary OS workspace for the second repository, combined records, temporary corpus, and temporary search index. The test removes that workspace after a successful run; it does not create a new persistent repository or production resource.
 
+Knowledge-data extraction/normalization/admission from TGserver is not implemented in this repository. That processing system is a separate development scope and will integrate with TGserver and this KB later through explicit contracts.
+
 ## 8. Windows compatibility boundary
 
 The pinned upstream runtime currently requires repository-managed Windows/runtime compatibility handling for measured defects:
@@ -140,7 +142,7 @@ Compatibility source alone is not enough. `tests/verify-mvs-windows.ps1` verifie
 
 ## 9. Future boundary
 
-Astera-based KB architecture is future implementation material. It must not be represented as current implementation until implemented and validated. Future design material must remain clearly separated from the current baseline.
+TGserver-linked knowledge processing/admission and any Astera-oriented KB architecture are separate future integration material. They must not be represented as current implementation until implemented and validated in their own scope and integrated through explicit contracts.
 
 ## 10. Current implementation boundary (2026-10-01)
 
@@ -157,37 +159,26 @@ Validated current capability:
 - real repository regression gate PASS;
 - G-ACE knowledge adapter unit tests PASS: 5/5;
 - renderer tests PASS: 2/2;
-- latest validated full knowledge export PASS: 47 records;
-- generated knowledge corpus PASS: 47 Markdown records;
-- generated knowledge index PASS: 47/47 files, 331 chunks, 331 embeddings;
-- generated knowledge graph PASS: 282 entities, 281 relationships;
-- semantic retrieval of Kuzu compatibility record `74e8171...` PASS;
-- semantic retrieval of G-ACE adapter record `4912a442...` PASS;
-- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=47`;
-- MCP stdio initialize PASS;
-- MCP list-tools PASS with 28 tools observed;
-- MCP `get_project_status` PASS;
-- MCP Kuzu record retrieval PASS;
-- MCP adapter record retrieval PASS;
-- `GACE_MCP_CLIENT_E2E=PASS`;
-- `GACE_MCP_WINDOWS_E2E=PASS`.
+- generated knowledge export/index/retrieval PASS;
+- MCP stdio initialize/list-tools/status/search PASS;
+- deterministic multi-repository combiner tests PASS: 3/3;
+- cross-repository export/combine PASS: 70 current records + 20 Astera records = 90 records;
+- cross-repository rendered corpus PASS: 90 Markdown records;
+- cross-repository index PASS: 90/90 files, 633 chunks, 633 embeddings;
+- cross-repository knowledge graph PASS: 540 entities, 539 relationships;
+- MCP retrieval of `gace-dev-kb` record `a017c934...` PASS;
+- MCP retrieval of `seigo-gace/Astera` record `5ef89073...` PASS;
+- `GACE_CROSS_REPO_MCP_REUSE=PASS CHECKS=2 REPOSITORIES=2`;
+- `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2`;
+- `CROSS_REPO_TEMP_CLEANUP=PASS`.
 
 Observed but not closed:
 
 - BM25 index build emits a non-fatal Lance warning and hybrid mode falls back to vector-only;
-- semantic searches emit entity-matching warnings despite returning the required records;
+- semantic searches can emit entity-matching warnings despite returning the required records;
 - the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
-- client-side initialization display currently reports MCP server name/version as `unknown` while initialization itself succeeds;
+- client-side initialization display can report MCP server name/version as `unknown` while initialization itself succeeds;
 - local `.gitignore` remains untracked and is intentionally not mutated by repository automation;
 - the pre-existing local `scripts/__pycache__/` remains untouched; current Python test commands suppress new bytecode generation.
 
-Implemented in repository source, pending Windows runtime validation:
-
-- deterministic multi-repository JSONL combining;
-- combine unit tests;
-- temporary second-repository clone and combined-corpus indexing gate;
-- real MCP cross-repository retrieval from current `gace-dev-kb` and public `seigo-gace/Astera` known records.
-
-Not yet completed or validated:
-
-- Master Windows `GACE_CROSS_REPO_REUSE_E2E=PASS`.
+The first-version repository knowledge reuse E2E boundary is closed. Remaining work in this repository is quality hardening and regression protection for the retained warning classes and runtime compatibility behavior.
