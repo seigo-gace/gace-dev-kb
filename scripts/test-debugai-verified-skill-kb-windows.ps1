@@ -28,6 +28,79 @@ if ($ExpectedSkillCount -lt 1) {
     throw "EXPECTED_SKILL_COUNT_INVALID=$ExpectedSkillCount"
 }
 
+function Invoke-MvsCapture {
+    param(
+        [string[]]$Arguments,
+        [string]$WorkingDirectory,
+        [string]$LogPrefix,
+        [int]$TimeoutSeconds = 600
+    )
+
+    $stdoutPath = Join-Path $WorkingDirectory "$LogPrefix.stdout.log"
+    $stderrPath = Join-Path $WorkingDirectory "$LogPrefix.stderr.log"
+    Remove-Item $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
+
+    $quotedArguments = @(
+        foreach ($argument in $Arguments) {
+            '"' + ([string]$argument).Replace('"', '\"') + '"'
+        }
+    )
+
+    $process = $null
+    $startedAt = Get-Date
+    try {
+        $process = Start-Process `
+            -FilePath $Mvs `
+            -ArgumentList $quotedArguments `
+            -WorkingDirectory $WorkingDirectory `
+            -NoNewWindow `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+
+        while (-not $process.HasExited) {
+            if (((Get-Date) - $startedAt).TotalSeconds -ge $TimeoutSeconds) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                throw "MVS_TIMEOUT=${TimeoutSeconds}s ARGS=$($Arguments -join ' ') STDOUT=$stdoutPath STDERR=$stderrPath"
+            }
+            Start-Sleep -Milliseconds 500
+            $process.Refresh()
+        }
+
+        $process.WaitForExit()
+        $process.Refresh()
+        [string]$stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+        [string]$stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
+
+        [pscustomobject]@{
+            ExitCode   = [int]$process.ExitCode
+            Stdout     = $stdout
+            Stderr     = $stderr
+            StdoutPath = $stdoutPath
+            StderrPath = $stderrPath
+        }
+    }
+    finally {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Restore-EnvironmentValue {
+    param(
+        [string]$Name,
+        [AllowNull()][string]$Value
+    )
+
+    if ($null -eq $Value) {
+        Remove-Item "Env:$Name" -ErrorAction SilentlyContinue
+    }
+    else {
+        Set-Item "Env:$Name" $Value
+    }
+}
+
 Write-Host '=== PREPARE PINNED MODULECATALOG SOURCE ==='
 New-Item -ItemType Directory -Path (Split-Path $Catalog) -Force | Out-Null
 if (Test-Path $Catalog) {
@@ -89,32 +162,60 @@ if ($corpusCount -ne $ExpectedSkillCount) {
 }
 Write-Host "DEBUGAI_SKILL_DATA=PASS RECORDS=$recordCount CORPUS=$corpusCount"
 
-Write-Host "`n=== INITIALIZE ISOLATED TRIAL KB ==="
-Push-Location $TrialRoot
+# This trial has only 13 Markdown documents. Keep the MVS parser path single-worker
+# on Windows so one verification run cannot fan out into many crashing child
+# processes or flood the interactive PowerShell console. The established full KB
+# index remains unchanged; this limit is scoped to this trial process only.
+$previousWorkers = $env:MCP_VECTOR_SEARCH_WORKERS
+$previousMaxWorkers = $env:MCP_VECTOR_SEARCH_MAX_WORKERS
+$previousFaulthandler = $env:PYTHONFAULTHANDLER
+$env:MCP_VECTOR_SEARCH_WORKERS = '1'
+$env:MCP_VECTOR_SEARCH_MAX_WORKERS = '1'
+$env:PYTHONFAULTHANDLER = '1'
+
 try {
-    & $Mvs init --force --extensions .md --no-auto-index --no-mcp --no-auto-indexing
-    if ($LASTEXITCODE -ne 0) {
-        throw "DEBUGAI_SKILL_MVS_INIT_FAILED=$LASTEXITCODE"
+    Write-Host "`n=== INITIALIZE ISOLATED TRIAL KB ==="
+    $initResult = Invoke-MvsCapture `
+        -Arguments @('init','--force','--extensions','.md','--no-auto-index','--no-mcp','--no-auto-indexing') `
+        -WorkingDirectory $TrialRoot `
+        -LogPrefix 'mvs-init' `
+        -TimeoutSeconds 180
+    if ($initResult.ExitCode -ne 0) {
+        throw "DEBUGAI_SKILL_MVS_INIT_FAILED=$($initResult.ExitCode) STDOUT=$($initResult.StdoutPath) STDERR=$($initResult.StderrPath)"
     }
 
     Write-Host "`n=== INDEX VERIFIED DEBUGAI SKILLS ==="
-    & $Mvs index --force
-    if ($LASTEXITCODE -ne 0) {
-        throw "DEBUGAI_SKILL_MVS_INDEX_FAILED=$LASTEXITCODE"
+    $indexResult = Invoke-MvsCapture `
+        -Arguments @('index','--force') `
+        -WorkingDirectory $TrialRoot `
+        -LogPrefix 'mvs-index' `
+        -TimeoutSeconds 600
+    if ($indexResult.ExitCode -ne 0) {
+        throw "DEBUGAI_SKILL_MVS_INDEX_FAILED=$($indexResult.ExitCode) STDOUT=$($indexResult.StdoutPath) STDERR=$($indexResult.StderrPath)"
+    }
+    if ($indexResult.Stdout -notmatch 'Reindex complete:') {
+        throw "DEBUGAI_SKILL_MVS_INDEX_COMPLETION_MISSING STDOUT=$($indexResult.StdoutPath) STDERR=$($indexResult.StderrPath)"
     }
 
     Write-Host "`n=== VERIFY INDEX STATUS ==="
-    $status = (& $Mvs status 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-        throw "DEBUGAI_SKILL_MVS_STATUS_FAILED=$LASTEXITCODE"
+    $statusResult = Invoke-MvsCapture `
+        -Arguments @('status') `
+        -WorkingDirectory $TrialRoot `
+        -LogPrefix 'mvs-status' `
+        -TimeoutSeconds 120
+    if ($statusResult.ExitCode -ne 0) {
+        throw "DEBUGAI_SKILL_MVS_STATUS_FAILED=$($statusResult.ExitCode) STDOUT=$($statusResult.StdoutPath) STDERR=$($statusResult.StderrPath)"
     }
-    Write-Host $status
+    $status = ($statusResult.Stdout + [Environment]::NewLine + $statusResult.Stderr).Trim()
     if ($status -notmatch "Indexed Files:\s+$ExpectedSkillCount/$ExpectedSkillCount") {
-        throw "DEBUGAI_SKILL_INDEX_COUNT_MISMATCH expected=$ExpectedSkillCount"
+        throw "DEBUGAI_SKILL_INDEX_COUNT_MISMATCH expected=$ExpectedSkillCount STDOUT=$($statusResult.StdoutPath) STDERR=$($statusResult.StderrPath)"
     }
+    Write-Host "DEBUGAI_SKILL_MVS_INDEX=PASS FILES=$ExpectedSkillCount WORKERS=1"
 }
 finally {
-    Pop-Location
+    Restore-EnvironmentValue -Name 'MCP_VECTOR_SEARCH_WORKERS' -Value $previousWorkers
+    Restore-EnvironmentValue -Name 'MCP_VECTOR_SEARCH_MAX_WORKERS' -Value $previousMaxWorkers
+    Restore-EnvironmentValue -Name 'PYTHONFAULTHANDLER' -Value $previousFaulthandler
 }
 
 Write-Host "`n=== REAL MCP RETRIEVAL: ALL 13 + NATURAL QUERIES ==="
