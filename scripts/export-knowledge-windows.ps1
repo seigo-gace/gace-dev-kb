@@ -2,7 +2,7 @@ param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
     [string]$Revision = 'HEAD',
-    [int]$MaxCount = 50
+    [int]$MaxCount = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +15,8 @@ $Output = Join-Path $OutputDir 'gace-dev-kb.jsonl'
 foreach ($p in @($Python, $Repo, $Adapter)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
+
+if ($MaxCount -lt 0) { throw "MAX_COUNT_INVALID=$MaxCount" }
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
@@ -37,5 +39,6 @@ if ($records.Count -eq 0) {
     throw 'GACE_KNOWLEDGE_OUTPUT_EMPTY'
 }
 
-Write-Host "GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS RECORDS=$($records.Count)"
+$mode = if ($MaxCount -eq 0) { 'FULL_HISTORY' } else { "BOUNDED_$MaxCount" }
+Write-Host "GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS RECORDS=$($records.Count) MODE=$mode"
 Write-Host "OUTPUT=$Output"
