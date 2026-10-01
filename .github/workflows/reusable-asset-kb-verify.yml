@@ -1,0 +1,42 @@
+name: Reusable Asset KB Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/reusable-asset-kb-schema-20261001
+
+permissions:
+  contents: read
+
+jobs:
+  reusable-asset-kb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Syntax gates
+        run: |
+          python -m py_compile \
+            scripts/import_modulecatalog_reusable_export.py \
+            scripts/import_reusable_asset_bundle.py \
+            tests/mcp_reusable_asset_e2e.py
+
+      - name: Reusable export importer tests
+        run: python -B tests/test_import_modulecatalog_reusable_export.py
+
+      - name: Generic reusable bundle compatibility tests
+        run: python -B tests/test_import_reusable_asset_bundle.py
+
+      - name: Existing knowledge regression tests
+        run: |
+          python -B tests/test_combine_knowledge_records.py
+          python -B tests/test_render_knowledge_corpus.py
+          python -B tests/test_gace_knowledge_adapter.py
+          python -B tests/test_import_verified_modulecatalog_skills.py
