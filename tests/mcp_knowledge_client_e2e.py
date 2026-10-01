@@ -101,10 +101,10 @@ async def run_e2e(python: Path, project_root: Path, timeout: int) -> None:
                         session.call_tool(
                             "search_code",
                             arguments={
-                                "query": "normalize Windows paths Kuzu graph cleanup",
-                                "limit": 10,
+                                "query": "normalize Windows paths for Kuzu graph cleanup",
+                                "limit": 50,
                                 "similarity_threshold": 0.0,
-                                "search_mode": "vector",
+                                "search_mode": "bm25",
                                 "use_rerank": False,
                                 "expand": False,
                             },
@@ -117,16 +117,16 @@ async def run_e2e(python: Path, project_root: Path, timeout: int) -> None:
                     kuzu_text = text_from_result(kuzu)
                     if "74e8171" not in kuzu_text:
                         raise RuntimeError("MCP_SEARCH_KUZU_RECORD_MISSING")
-                    print("MCP_SEARCH_KUZU=PASS COMMIT=74e8171")
+                    print("MCP_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25")
 
                     adapter = await with_timeout(
                         session.call_tool(
                             "search_code",
                             arguments={
                                 "query": "deterministic G-ACE repository knowledge adapter",
-                                "limit": 10,
+                                "limit": 50,
                                 "similarity_threshold": 0.0,
-                                "search_mode": "vector",
+                                "search_mode": "bm25",
                                 "use_rerank": False,
                                 "expand": False,
                             },
@@ -139,7 +139,14 @@ async def run_e2e(python: Path, project_root: Path, timeout: int) -> None:
                     adapter_text = text_from_result(adapter)
                     if "4912a442" not in adapter_text:
                         raise RuntimeError("MCP_SEARCH_ADAPTER_RECORD_MISSING")
-                    print("MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442")
+                    print("MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25")
+
+            errlog.flush()
+            errlog.seek(0)
+            stderr_text = errlog.read().strip()
+            if "Could not find entity matching" in stderr_text:
+                raise RuntimeError("MCP_DOC_ONLY_KG_ENTITY_WARNING_PRESENT")
+            print("MCP_DOC_ONLY_KG_WARNING_REGRESSION=PASS")
         except BaseException:
             errlog.flush()
             errlog.seek(0)
