@@ -83,6 +83,23 @@ function Invoke-MvsCapture {
     }
 }
 
+function Assert-NoClosedWarningRegression {
+    param(
+        [string]$Output,
+        [string]$Stage
+    )
+
+    if ($Output -match 'BM25 index building failed') {
+        throw "BM25_BUILD_WARNING_PRESENT STAGE=$Stage"
+    }
+    if ($Output -match 'Hybrid search will fall back to vector-only mode') {
+        throw "BM25_VECTOR_FALLBACK_PRESENT STAGE=$Stage"
+    }
+    if ($Output -match 'get_sentence_embedding_dimension') {
+        throw "EMBEDDING_DIMENSION_FUTUREWARNING_PRESENT STAGE=$Stage"
+    }
+}
+
 Write-Host '=== VERIFY WINDOWS MVS COMPATIBILITY ==='
 try {
     & $VerifyScript -Root $Root
@@ -120,11 +137,13 @@ if (-not (Test-Path $Config)) {
         -WorkingDirectory $SearchRoot `
         -TimeoutSeconds 180
     if ($initResult.ExitCode -ne 0) { throw "KNOWLEDGE_MVS_INIT_FAILED=$($initResult.ExitCode)" }
+    Assert-NoClosedWarningRegression -Output $initResult.Output -Stage 'init'
 }
 
 Write-Host '=== INDEX KNOWLEDGE CORPUS ==='
 $indexResult = Invoke-MvsCapture -Arguments @('index','--force') -WorkingDirectory $SearchRoot -TimeoutSeconds 600
 if ($indexResult.ExitCode -ne 0) { throw "KNOWLEDGE_MVS_INDEX_FAILED=$($indexResult.ExitCode)" }
+Assert-NoClosedWarningRegression -Output $indexResult.Output -Stage 'index'
 if ($indexResult.Output -match "cannot find context for 'fork'") { throw 'WINDOWS_FORK_CONTEXT_ERROR_PRESENT' }
 if ($indexResult.Output -notmatch 'Reindex complete:') { throw 'KNOWLEDGE_INDEX_COMPLETION_MARKER_MISSING' }
 if ($indexResult.Output -match 'Reindex complete:\s*0 files,\s*0 chunks') { throw 'KNOWLEDGE_INDEX_ZERO_CORPUS' }
@@ -132,6 +151,7 @@ if ($indexResult.Output -match 'Reindex complete:\s*0 files,\s*0 chunks') { thro
 Write-Host '=== KNOWLEDGE SEARCH STATUS ==='
 $statusResult = Invoke-MvsCapture -Arguments @('status') -WorkingDirectory $SearchRoot -TimeoutSeconds 120
 if ($statusResult.ExitCode -ne 0) { throw "KNOWLEDGE_MVS_STATUS_FAILED=$($statusResult.ExitCode)" }
+Assert-NoClosedWarningRegression -Output $statusResult.Output -Stage 'status'
 if ($statusResult.Output -notmatch "Indexed Files:\s+$recordCount/$recordCount") {
     throw "KNOWLEDGE_STATUS_COUNT_MISMATCH expected=$recordCount"
 }
@@ -142,6 +162,7 @@ $kuzuResult = Invoke-MvsCapture `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 if ($kuzuResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_KUZU_FAILED=$($kuzuResult.ExitCode)" }
+Assert-NoClosedWarningRegression -Output $kuzuResult.Output -Stage 'search-kuzu'
 if ($kuzuResult.Output -notmatch '74e8171') { throw 'KNOWLEDGE_SEARCH_KUZU_RECORD_MISSING' }
 
 Write-Host '=== SEARCH G-ACE ADAPTER ==='
@@ -150,7 +171,10 @@ $adapterResult = Invoke-MvsCapture `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 if ($adapterResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_ADAPTER_FAILED=$($adapterResult.ExitCode)" }
+Assert-NoClosedWarningRegression -Output $adapterResult.Output -Stage 'search-adapter'
 if ($adapterResult.Output -notmatch '4912a442') { throw 'KNOWLEDGE_SEARCH_ADAPTER_RECORD_MISSING' }
 
+Write-Host 'MVS_BM25_WARNING_REGRESSION=PASS'
+Write-Host 'MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS'
 Write-Host "GACE_KNOWLEDGE_INDEX=PASS RECORDS=$recordCount"
 Write-Host "SEARCH_ROOT=$SearchRoot"
