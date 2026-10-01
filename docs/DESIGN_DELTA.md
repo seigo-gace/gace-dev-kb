@@ -219,7 +219,7 @@ The generic OSS search/index core and its repository-managed Windows regression 
 
 ## 2026-10-01 — deterministic G-ACE repository knowledge adapter source added
 
-**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS TEST + REAL EXPORT PENDING.
+**Status:** superseded by the real Windows adapter validation below.
 
 ### Previous design
 
@@ -256,6 +256,70 @@ Rules:
 - `daa68d5611d6fdb7aa48b6c6703ec997a835d79f` — adapter contract/unit tests;
 - `9ef50415772bef11961fe709a836239f34af5cf7` — Windows export wrapper.
 
-### Validation state
+---
 
-Repository source and tests exist, but they have not yet been executed on the Master Windows runtime. Therefore this entry does **not** claim adapter PASS, automatic generated-record indexing, MCP client E2E, or cross-repository reuse E2E.
+## 2026-10-01 — G-ACE adapter and real JSONL export validated
+
+**Status:** PASS for repository → deterministic knowledge-record export.
+
+### Real Windows evidence
+
+Master Windows execution at `2652adc797af18c76742680ee85ab1eb7b1e242d` produced:
+
+- adapter unit suite: 5 tests executed, all `OK`;
+- `GACE_KNOWLEDGE_EXPORT=PASS`;
+- exported records: 36;
+- `GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS`;
+- output: `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`;
+- sampled records contained the required contract keys and real repository/commit/source values;
+- local repository state remained otherwise unchanged except the pre-existing untracked `.gitignore` and a Python `scripts/__pycache__/` created by the first test execution.
+
+### Follow-up correction
+
+The adapter unit test was changed to disable bytecode generation so future executions do not create a new `__pycache__` artifact. The existing local cache is not deleted automatically because it is local state, not repository source.
+
+### Current decision
+
+The repository → knowledge-record stage is now validated. The next runtime gate is generated record → searchable OSS knowledge index.
+
+---
+
+## 2026-10-01 — generated knowledge corpus and OSS indexing pipeline source added
+
+**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS CORPUS/INDEX/SEARCH VALIDATION PENDING.
+
+### Implemented/new design
+
+The initial JSONL contract remains the canonical generated record shape. A deterministic projection converts those records into Markdown solely as an OSS search input format, without changing or inventing knowledge fields.
+
+Generated runtime boundary:
+
+```text
+F:\G-ACE-KB\data\
+├─ knowledge-records\
+│  └─ gace-dev-kb.jsonl
+└─ knowledge-search\
+   ├─ records\                 # one generated Markdown document per record
+   └─ .mcp-vector-search\      # dedicated generated search config/index
+```
+
+The pipeline:
+
+1. reruns the deterministic Git knowledge export;
+2. renders one Markdown file per record;
+3. initializes or reuses a dedicated `mcp-vector-search` project outside Git source;
+4. force-indexes the generated corpus;
+5. verifies indexed-file count equals exported record count;
+6. searches for the known Kuzu Windows compatibility record (`74e8171...`);
+7. searches for the known G-ACE adapter record (`4912a442...`).
+
+### Applying implementation commits
+
+- `8342c868a62be6dacc7922d526d6d40f59a99619` — deterministic JSONL → Markdown corpus renderer;
+- `61cc0f903171f93412be0828c0dadc196424e260` — Windows generated knowledge indexing/retrieval wrapper;
+- `1172ae12eccb1b159588940b621c93ffd5fd5b4d` — renderer contract tests;
+- `3cdf008054f333e0fa56e82b0b6442457f9f14af` — prevent future adapter-test bytecode cache creation.
+
+### Validation boundary
+
+Source existence is not runtime PASS. The renderer tests, real generated corpus, dedicated MVS index, exact indexed-record count, and the two semantic retrieval gates must pass on the Master Windows environment before this pipeline is declared validated.
