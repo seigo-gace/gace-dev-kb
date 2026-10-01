@@ -61,7 +61,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, semantic retrieval regression, deterministic G-ACE knowledge adapter tests, and real JSONL export have passed on the Master Windows environment. Automatic generated-record indexing into a dedicated `mcp-vector-search` knowledge corpus is now implemented in source and awaits Master Windows validation. MCP client E2E remains incomplete.
+`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, repository regression, deterministic G-ACE knowledge adapter/export, generated Markdown corpus, dedicated generated-knowledge index, and two known-record retrieval gates have passed on the Master Windows environment. The next runtime gate is MCP stdio server → real MCP client retrieval.
 
 ## Initial knowledge contract
 
@@ -95,57 +95,67 @@ Only source, configuration, design, tests, and durable documentation belong in G
 
 ## Windows bootstrap and regression
 
-- `scripts/bootstrap-mvs-windows.ps1` installs the pinned OSS runtime and applies the measured Windows/docs compatibility fixes, including the Kuzu Windows-path compatibility handling.
-- `tests/verify-mvs-windows.ps1` verifies the installed compatibility state and CLI startup.
-- `tests/regression-mvs-windows.ps1` performs the tracked KB corpus full reindex, knowledge-graph build, status check, and the two required semantic retrieval regressions. It temporarily isolates the regression from a local `.gitignore` by changing `respect_gitignore`, then restores the prior value.
+- `scripts/bootstrap-mvs-windows.ps1` installs pinned `mcp-vector-search==4.1.14` and applies the measured Windows/docs compatibility fixes, including Windows Kuzu-path handling and Windows multiprocessing `spawn` handling.
+- `tests/verify-mvs-windows.ps1` verifies the installed compatibility state, CLI startup, and real multiprocessing context.
+- `tests/regression-mvs-windows.ps1` performs the tracked KB corpus full reindex, knowledge-graph build, status check, and two semantic retrieval regressions. It temporarily isolates the regression from a local `.gitignore` by changing `respect_gitignore`, then restores the prior value.
 
 ## G-ACE knowledge adapter and generated search corpus
 
 - `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority.
 - `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, and JSONL contract output. Master Windows result: 5 tests, all PASS.
-- `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`. Master Windows real export: 36 records, PASS.
+- `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`.
 - `scripts/render_knowledge_corpus.py` turns JSONL records into deterministic Markdown documents suitable for semantic indexing without synthesizing missing evidence.
-- `tests/test_render_knowledge_corpus.py` validates renderer behavior; Master Windows execution is pending.
-- `scripts/index-knowledge-windows.ps1` exports, renders, initializes/reuses `F:\G-ACE-KB\data\knowledge-search`, indexes the generated corpus with `mcp-vector-search`, checks indexed-file count, and verifies retrieval of two known historical records. Source is implemented; Master Windows runtime validation is pending.
+- `tests/test_render_knowledge_corpus.py` validates renderer behavior. Master Windows result: 2 tests, all PASS.
+- `scripts/index-knowledge-windows.ps1` self-verifies/repairs Windows MVS compatibility, exports records, renders the generated corpus, initializes/reuses `F:\G-ACE-KB\data\knowledge-search`, indexes it with `mcp-vector-search`, verifies exact indexed-file count, and proves retrieval of two known historical records.
+
+## MCP client E2E
+
+- `tests/mcp_knowledge_client_e2e.py` launches the installed `mcp-vector-search` MCP server over stdio, performs the MCP initialize/list-tools handshake, calls `get_project_status`, and retrieves the known Kuzu compatibility and G-ACE adapter records through the real `search_code` MCP tool.
+- `scripts/test-mcp-knowledge-e2e-windows.ps1` runs that client E2E against the already-generated knowledge-search project in one Windows command.
+
+The MCP E2E source exists on the active feature branch. It is not PASS until executed on the Master Windows runtime.
 
 ## Current status
 
-**OSS SEARCH CORE + WINDOWS REGRESSION + G-ACE ADAPTER/EXPORT VALIDATED / GENERATED KNOWLEDGE INDEX SOURCE IMPLEMENTED, RUNTIME VALIDATION PENDING**
+**OSS SEARCH CORE + WINDOWS REGRESSION + G-ACE ADAPTER/EXPORT + GENERATED KNOWLEDGE INDEX/RETRIEVAL VALIDATED / MCP CLIENT E2E SOURCE IMPLEMENTED, RUNTIME VALIDATION PENDING**
 
 Validated on the Master Windows environment:
 
 - `mcp-vector-search` 4.1.14 isolated runtime;
 - repository-managed Windows bootstrap: PASS;
 - Windows compatibility verifier: PASS;
-- tracked KB corpus full reindex: 4 files / 161 chunks / 161 embeddings;
-- embedding model: `sentence-transformers/all-MiniLM-L6-v2`;
-- knowledge graph build: 58 entities / 57 relationships;
-- status: 4/4 indexed, version 4.1.14;
-- semantic design query returned `CURRENT_DESIGN.md` first;
-- semantic failure/root-cause/fix/validation query returned expected repository knowledge;
-- real Windows regression marker: `MVS_REAL_REGRESSION=PASS`;
-- `respect_gitignore` restored to its original `true` value after regression;
+- Windows multiprocessing context: `spawn`;
+- repository tracked-corpus reindex: 4 files / 161 chunks / 161 embeddings;
+- repository knowledge graph: 58 entities / 57 relationships;
+- repository status: 4/4 indexed;
+- repository semantic design and failure/root-cause/fix/validation retrieval: PASS;
+- real repository regression marker: `MVS_REAL_REGRESSION=PASS`;
 - adapter unit tests: 5/5 PASS;
-- real adapter export: `GACE_KNOWLEDGE_EXPORT=PASS`, 36 records;
-- Windows export wrapper: `GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS`, 36 records.
+- renderer unit tests: 2/2 PASS;
+- real generated knowledge export: 47 records in the latest full pipeline run;
+- generated corpus: 47 Markdown knowledge documents;
+- generated knowledge index: 47/47 files, 331 chunks, 331 embeddings;
+- generated knowledge graph: 282 entities / 281 relationships;
+- known Kuzu fix retrieval returned commit `74e8171...` first;
+- known G-ACE adapter retrieval returned commit `4912a442...` first;
+- final generated-knowledge marker: `GACE_KNOWLEDGE_INDEX=PASS RECORDS=47`.
 
 Observed non-blocking evidence retained for follow-up instead of being silently hidden:
 
-- BM25 index build warning caused hybrid search to fall back to vector-only mode during the repository regression;
-- semantic searches emitted entity-matching warnings while still returning the required results;
+- BM25 index build warning caused hybrid search to fall back to vector-only mode;
+- semantic searches emitted entity-matching warnings while still returning the required records;
+- the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
 - local `.gitignore` remains untracked and is not modified by repository automation;
-- the first adapter test run created local `scripts/__pycache__/`; future test execution disables bytecode generation, but the existing local cache has not been deleted by repository automation.
+- the pre-existing local `scripts/__pycache__/` remains untouched; current tests disable new bytecode generation.
 
 Implemented on the active feature branch, not yet Windows-runtime validated:
 
-- deterministic JSONL → Markdown knowledge-corpus renderer;
-- generated-record → dedicated `mcp-vector-search` knowledge-index pipeline;
-- renderer tests and two-record semantic retrieval gate.
+- real MCP stdio server → MCP Python client handshake/tool-call E2E;
+- MCP retrieval gates for the known Kuzu fix and G-ACE adapter knowledge records.
 
 Not yet completed:
 
-- Windows real-runtime generated knowledge corpus/index/retrieval PASS;
-- MCP server → AI client E2E validation;
+- Master Windows `GACE_MCP_CLIENT_E2E=PASS`;
 - cross-repository knowledge reuse E2E.
 
-Do not report those incomplete items as implemented or validated.
+Do not report incomplete items as validated.
