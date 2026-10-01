@@ -26,7 +26,7 @@ class T(unittest.TestCase):
             p=self.bundle/rel; files.append({'path':rel,'size':p.stat().st_size,'sha256':sha(p)})
         (self.bundle/'manifest.json').write_text(json.dumps({'schemaVersion':1,'algorithm':'sha256','files':files}))
     def test_imports(self):
-        records,meta,corpus=module.build(self.catalog,'kb-export/asset-a',self.out,1); self.assertEqual(len(records),1); self.assertEqual(records[0].type,'reusable_asset'); self.assertEqual(meta[0]['asset_kind'],'logic'); txt=next(corpus.glob('*.md')).read_text(); self.assertIn('Applicability',txt); self.assertIn('route resolution',txt); self.assertIn('policy is missing',txt); self.assertTrue((self.out/'knowledge-metadata.jsonl').is_file())
+        records,meta,corpus,asset_count=module.build(self.catalog,'kb-export/asset-a',self.out,1); self.assertEqual(asset_count,1); self.assertEqual(len(records),1); self.assertEqual(records[0].type,'reusable_asset'); self.assertEqual(meta[0]['asset_kind'],'logic'); txt=next(corpus.glob('*.md')).read_text(); self.assertIn('Applicability',txt); self.assertIn('route resolution',txt); self.assertIn('policy is missing',txt); self.assertTrue((self.out/'knowledge-metadata.jsonl').is_file())
     def test_manifest_tamper(self):
         (self.bundle/'asset.json').write_text('{}')
         with self.assertRaisesRegex(RuntimeError,'BUNDLE_MANIFEST_'): module.build(self.catalog,'kb-export/asset-a',self.out,1)
@@ -39,4 +39,20 @@ class T(unittest.TestCase):
     def test_commit_mismatch(self):
         u=self.unit(); u['provenance']['catalog']['commit']='0'*40; self.write_bundle([u])
         with self.assertRaisesRegex(RuntimeError,'CATALOG_COMMIT_MISMATCH'): module.build(self.catalog,'kb-export/asset-a',self.out,1)
+
+    def test_imports_multi_asset_bundle(self):
+        (self.bundle/'asset.json').unlink()
+        assets=[{'schema_version':1,'asset_id':'asset-a','name':'Asset A'},{'schema_version':1,'asset_id':'asset-b','name':'Asset B'}]
+        with (self.bundle/'assets.jsonl').open('w',newline='\n') as h:
+            for item in assets: h.write(json.dumps(item)+'\n')
+        u1=self.unit(); u2=self.unit(); u2['knowledge_id']='asset-b::architecture'; u2['parent_asset_id']='asset-b'; u2['asset_kind']='architecture'; u2['name']='Reusable Architecture'; u2['summary']='Reusable architecture pattern'; u2['provenance']['catalog']['asset_id']='asset-b'
+        with (self.bundle/'knowledge-units.jsonl').open('w',newline='\n') as h:
+            h.write(json.dumps(u1)+'\n'); h.write(json.dumps(u2)+'\n')
+        files=[]
+        for rel in ('assets.jsonl','knowledge-units.jsonl'):
+            q=self.bundle/rel; files.append({'path':rel,'size':q.stat().st_size,'sha256':sha(q)})
+        (self.bundle/'manifest.json').write_text(json.dumps({'schemaVersion':1,'algorithm':'sha256','files':files}))
+        records,meta,corpus,asset_count=module.build(self.catalog,'kb-export/asset-a',self.out,2)
+        self.assertEqual(asset_count,2); self.assertEqual(len(records),2); self.assertEqual({x['asset_kind'] for x in meta},{'logic','architecture'})
+
 if __name__=='__main__': unittest.main(verbosity=2)
