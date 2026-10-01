@@ -199,10 +199,23 @@ def build_record(repo: Path, sha: str, repository: str) -> KnowledgeRecord:
     )
 
 
-def list_commits(repo: Path, revision: str, max_count: int) -> list[str]:
-    if max_count < 1:
-        raise ValueError("max_count must be >= 1")
-    output = run_git(repo, "rev-list", "--reverse", f"--max-count={max_count}", revision)
+def list_commits(repo: Path, revision: str, max_count: int = 0) -> list[str]:
+    """List commits oldest-to-newest.
+
+    ``max_count=0`` means all commits reachable from ``revision``. A positive
+    value is an explicit bounded export for tests or temporary workflows. The
+    durable KB path must not silently evict older knowledge as the repository
+    grows.
+    """
+    if max_count < 0:
+        raise ValueError("max_count must be >= 0")
+
+    args = ["rev-list", "--reverse"]
+    if max_count > 0:
+        args.append(f"--max-count={max_count}")
+    args.append(revision)
+
+    output = run_git(repo, *args)
     commits = [line.strip() for line in output.splitlines() if line.strip()]
     if not commits:
         raise RuntimeError(f"no commits resolved from revision: {revision}")
@@ -222,7 +235,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export committed G-ACE repository knowledge as JSONL")
     parser.add_argument("--repo", type=Path, required=True, help="Git repository to read")
     parser.add_argument("--revision", default="HEAD", help="Revision or revision range for git rev-list")
-    parser.add_argument("--max-count", type=int, default=50, help="Maximum commits to export")
+    parser.add_argument(
+        "--max-count",
+        type=int,
+        default=0,
+        help="Maximum commits to export; 0 exports all reachable commits (default)",
+    )
     parser.add_argument("--output", type=Path, help="JSONL destination; omit to print records")
     parser.add_argument(
         "--allow-dirty",
