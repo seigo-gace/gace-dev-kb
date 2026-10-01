@@ -31,6 +31,7 @@ jobs:
           python -m py_compile \
             scripts/import_modulecatalog_reusable_export.py \
             scripts/import_reusable_asset_bundle.py \
+            scripts/replace_modulecatalog_reusable_snapshot.py \
             tests/mcp_reusable_asset_e2e.py
 
       - name: Node syntax gate
@@ -60,6 +61,9 @@ jobs:
 
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
+
+      - name: Reusable active snapshot replacement tests
+        run: python -B tests/test_replace_modulecatalog_reusable_snapshot.py
 
       - name: Generic reusable bundle compatibility tests
         run: python -B tests/test_import_reusable_asset_bundle.py
