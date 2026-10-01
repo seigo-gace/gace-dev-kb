@@ -45,7 +45,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, repository regression, deterministic G-ACE knowledge adapter/export, generated Markdown corpus, dedicated generated-knowledge index, real MCP stdio server → MCP client handshake/tool calls, and known-record MCP retrieval gates have passed on the Master Windows environment. The remaining runtime gate is cross-repository knowledge reuse E2E.
+`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, repository regression, deterministic G-ACE knowledge adapter/export, generated Markdown corpus, dedicated generated-knowledge index, real MCP stdio server → MCP client handshake/tool calls, known-record MCP retrieval gates, and cross-repository reuse E2E have all passed on the Master Windows environment.
 
 ## Initial knowledge contract
 
@@ -114,18 +114,26 @@ GACE_MCP_WINDOWS_E2E=PASS
 
 ## Cross-repository reuse gate
 
-The active feature branch now contains the source for the final first-version reuse gate:
-
 - `scripts/combine_knowledge_records.py` deterministically combines multiple repository JSONL exports while preserving the initial record contract and deduplicating identical repository/commit/type records;
 - `tests/test_combine_knowledge_records.py` validates multi-repository combining and fail-closed behavior;
 - `tests/mcp_cross_repo_reuse_e2e.py` proves real MCP retrieval from at least two distinct repositories;
 - `scripts/test-cross-repo-reuse-windows.ps1` creates a temporary second-repository clone, exports both repositories, combines and indexes the records in a temporary search project, performs real MCP retrieval from both repositories, then removes the temporary E2E workspace.
 
-The default second repository for the gate is public `seigo-gace/Astera`, using commit `5ef89073...` as the known external-repository record. This cross-repository source is implemented but is not PASS until run on the Master Windows environment.
+The validated Master Windows run used public `seigo-gace/Astera` as the second repository. It combined 70 current-repository records plus 20 Astera records into 90 records, indexed all 90 files into 633 chunks/embeddings, built a 540-entity / 539-relationship graph, retrieved known records from both repositories through real MCP stdio, and removed the temporary workspace.
+
+Final markers:
+
+```text
+MCP_CROSS_REPO_SEARCH=PASS CHECK=1 REPOSITORY=seigo-gace/gace-dev-kb COMMIT=a017c934
+MCP_CROSS_REPO_SEARCH=PASS CHECK=2 REPOSITORY=seigo-gace/Astera COMMIT=5ef89073
+GACE_CROSS_REPO_MCP_REUSE=PASS CHECKS=2 REPOSITORIES=2
+GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2
+CROSS_REPO_TEMP_CLEANUP=PASS
+```
 
 ## Current status
 
-**OSS SEARCH CORE + WINDOWS REGRESSION + G-ACE ADAPTER/EXPORT + GENERATED KNOWLEDGE INDEX/RETRIEVAL + REAL MCP CLIENT E2E VALIDATED / CROSS-REPOSITORY REUSE E2E SOURCE IMPLEMENTED, RUNTIME VALIDATION PENDING**
+**FIRST-VERSION REPOSITORY → KNOWLEDGE → INDEX → MCP → CROSS-REPOSITORY REUSE E2E VALIDATED ON MASTER WINDOWS**
 
 Validated on the Master Windows environment:
 
@@ -139,34 +147,27 @@ Validated on the Master Windows environment:
 - real repository regression marker: `MVS_REAL_REGRESSION=PASS`;
 - adapter unit tests: 5/5 PASS;
 - renderer unit tests: 2/2 PASS;
-- latest validated generated knowledge export: 47 records;
-- generated corpus: 47 Markdown knowledge documents;
-- generated knowledge index: 47/47 files, 331 chunks, 331 embeddings;
-- generated knowledge graph: 282 entities / 281 relationships;
-- known Kuzu fix retrieval returned commit `74e8171...`;
-- known G-ACE adapter retrieval returned commit `4912a442...`;
-- final generated-knowledge marker: `GACE_KNOWLEDGE_INDEX=PASS RECORDS=47`;
+- generated knowledge export/index/retrieval: PASS;
 - real MCP stdio initialize/list-tools/status/search E2E: PASS;
-- real MCP tool count observed: 28;
 - real MCP Kuzu and adapter retrieval gates: PASS;
-- final MCP markers: `GACE_MCP_CLIENT_E2E=PASS` and `GACE_MCP_WINDOWS_E2E=PASS`.
+- deterministic multi-repository combiner tests: 3/3 PASS;
+- cross-repository combined corpus: 90 records;
+- cross-repository index: 90/90 files, 633 chunks, 633 embeddings;
+- cross-repository knowledge graph: 540 entities / 539 relationships;
+- real MCP retrieval from `seigo-gace/gace-dev-kb`: PASS;
+- real MCP retrieval from `seigo-gace/Astera`: PASS;
+- final cross-repository marker: `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2`;
+- temporary cross-repository workspace cleanup: PASS.
 
 Observed non-blocking evidence retained for follow-up instead of being silently hidden:
 
-- BM25 index build warning caused hybrid search to fall back to vector-only mode;
-- semantic searches emitted entity-matching warnings while still returning the required records;
+- BM25 index build warning causes hybrid search to fall back to vector-only mode;
+- semantic searches can emit entity-matching warnings while still returning the required records;
 - the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
-- MCP initialization currently reports server name/version as `unknown` in the client-side display even though protocol initialization succeeds;
+- MCP initialization client display can report server name/version as `unknown` even though protocol initialization succeeds;
 - local `.gitignore` remains untracked and is not modified by repository automation;
 - the pre-existing local `scripts/__pycache__/` remains untouched; current tests disable new bytecode generation.
 
-Implemented on the active feature branch, not yet Windows-runtime validated:
+The first-version repository knowledge reuse E2E is complete. The next work in this repository is measured quality hardening of the retained OSS/runtime warnings and regressions. Knowledge-data processing/admission from TGserver is intentionally outside this repository's current scope and will be developed separately before integration.
 
-- deterministic multi-repository knowledge-record combining;
-- real MCP cross-repository retrieval E2E using `gace-dev-kb` plus public `seigo-gace/Astera` in a temporary workspace.
-
-Not yet completed:
-
-- Master Windows `GACE_CROSS_REPO_REUSE_E2E=PASS`.
-
-Do not report incomplete items as validated.
+Do not report unresolved warning classes as fixed until exact runtime evidence closes them.
