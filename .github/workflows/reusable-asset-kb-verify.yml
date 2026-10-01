@@ -58,7 +58,7 @@ jobs:
             Write-Host "POWERSHELL_PARSE=PASS FILE=$file"
           }
 
-      - name: Reusable export importer tests
+      - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
 
       - name: Generic reusable bundle compatibility tests
@@ -70,3 +70,40 @@ jobs:
           python -B tests/test_render_knowledge_corpus.py
           python -B tests/test_gace_knowledge_adapter.py
           python -B tests/test_import_verified_modulecatalog_skills.py
+
+      - name: Real ModuleCatalog 80-asset producer-consumer contract
+        env:
+          MODULECATALOG_COMMIT: f83461b79344e18dda145978fec5cb8f62896ad1
+        run: |
+          set -euo pipefail
+          git clone https://github.com/seigo-gace/modular-catalog.git /tmp/modular-catalog
+          git -C /tmp/modular-catalog checkout --detach "$MODULECATALOG_COMMIT"
+          node scripts/run_modulecatalog_reusable_export.mjs \
+            --catalog-root /tmp/modular-catalog \
+            --output-root /tmp/modulecatalog-export \
+            --catalog-commit "$MODULECATALOG_COMMIT" \
+            --expected-asset-count 80
+          python -B scripts/import_modulecatalog_reusable_export.py \
+            --export-root /tmp/modulecatalog-export \
+            --output-root /tmp/gace-reusable-import \
+            --expected-catalog-commit "$MODULECATALOG_COMMIT" \
+            --expected-asset-count 80 \
+            --expected-record-count 720
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/gace-reusable-import')
+          metadata = [json.loads(line) for line in (root / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
+          records = [line for line in (root / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
+          corpus = list((root / 'records').glob('*.md'))
+          assert len(metadata) == 720, len(metadata)
+          assert len(records) == 720, len(records)
+          assert len(corpus) == 720, len(corpus)
+          assert len({row['parent_asset_id'] for row in metadata}) == 80
+          kinds = {row['knowledge_kind'] for row in metadata}
+          required = {'discovery','documentation','design','logic','architecture','evidence','code','test_case'}
+          assert required <= kinds, sorted(kinds)
+          assert all(row['verification']['status'] == 'verified' for row in metadata)
+          assert all(row['_gace']['commit'] == 'f83461b79344e18dda145978fec5cb8f62896ad1' for row in metadata)
+          print(f'REAL_MODULECATALOG_CONTRACT=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)}')
+          PY
