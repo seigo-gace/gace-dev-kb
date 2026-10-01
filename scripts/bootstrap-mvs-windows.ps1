@@ -24,9 +24,11 @@ if ($LASTEXITCODE -ne 0) { throw "MVS_INSTALL_FAILED=$LASTEXITCODE" }
 $Site = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search'
 $Main = Join-Path $Site 'cli\main.py'
 $Output = Join-Path $Site 'cli\output.py'
+$KnowledgeGraph = Join-Path $Site 'core\knowledge_graph.py'
 
-if (-not (Test-Path $Main)) { throw "MVS_MAIN_NOT_FOUND=$Main" }
-if (-not (Test-Path $Output)) { throw "MVS_OUTPUT_NOT_FOUND=$Output" }
+foreach ($p in @($Main, $Output, $KnowledgeGraph)) {
+    if (-not (Test-Path $p)) { throw "MVS_SOURCE_NOT_FOUND=$p" }
+}
 
 $mainText = Get-Content $Main -Raw
 if ($mainText -match '(?m)^import resource\s*$') {
@@ -55,6 +57,23 @@ $replacement = @'
 if ($outputText.Contains($needle) -and -not $outputText.Contains('if relevance_score is None:')) {
     $outputText = $outputText.Replace($needle, $replacement)
     Set-Content $Output -Value $outputText -Encoding UTF8
+}
+
+$kgText = Get-Content $KnowledgeGraph -Raw
+$kgNeedle = @'
+        escaped = [p.replace("'", "\\'") for p in file_paths]
+        path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
+'@
+$kgReplacement = @'
+        # G-ACE Windows compatibility: Kuzu inline string literals must not
+        # receive Windows backslash-separated relative paths.
+        normalized_paths = [p.replace("\\", "/") for p in file_paths]
+        escaped = [p.replace("'", "\\'") for p in normalized_paths]
+        path_list = "[" + ", ".join(f"'{p}'" for p in escaped) + "]"
+'@
+if ($kgText.Contains($kgNeedle) -and -not $kgText.Contains('normalized_paths = [p.replace("\\", "/") for p in file_paths]')) {
+    $kgText = $kgText.Replace($kgNeedle, $kgReplacement)
+    Set-Content $KnowledgeGraph -Value $kgText -Encoding UTF8
 }
 
 & $Mvs --help *> $null
