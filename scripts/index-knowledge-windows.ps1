@@ -179,20 +179,36 @@ foreach ($source in $sources) {
     $catalogRoot = Join-Path $Root "assets\accepted-$safeId"
     $outputRoot = Join-Path $AcceptedRoot $safeId
 
+    # ModuleCatalog manifests hash canonical Git blob bytes. A Windows checkout
+    # with core.autocrlf=true rewrites LF to CRLF and invalidates otherwise-valid
+    # manifest size/hash checks. Make the index path independently safe even when
+    # it is invoked without the higher-level promotion wrapper.
     if (-not (Test-Path (Join-Path $catalogRoot '.git'))) {
         New-Item -ItemType Directory -Path (Split-Path $catalogRoot) -Force | Out-Null
-        git clone "https://github.com/$repository.git" $catalogRoot
+        git -c core.autocrlf=false clone "https://github.com/$repository.git" $catalogRoot
         if ($LASTEXITCODE -ne 0) { throw "ACCEPTED_SOURCE_CLONE_FAILED=$sourceId" }
     }
 
+    git -C $catalogRoot config core.autocrlf false
+    if ($LASTEXITCODE -ne 0) { throw "ACCEPTED_SOURCE_AUTOCRLF_CONFIG_FAILED=$sourceId" }
+
     git -C $catalogRoot fetch origin
     if ($LASTEXITCODE -ne 0) { throw "ACCEPTED_SOURCE_FETCH_FAILED=$sourceId" }
-    git -C $catalogRoot checkout --detach $commit
+    git -C $catalogRoot checkout -f --detach $commit
     if ($LASTEXITCODE -ne 0) { throw "ACCEPTED_SOURCE_CHECKOUT_FAILED=$sourceId" }
+    git -C $catalogRoot reset --hard $commit
+    if ($LASTEXITCODE -ne 0) { throw "ACCEPTED_SOURCE_RESET_FAILED=$sourceId" }
+
     $actualCommit = (git -C $catalogRoot rev-parse HEAD).Trim()
     if ($actualCommit -ne $commit) {
         throw "ACCEPTED_SOURCE_COMMIT_MISMATCH id=$sourceId expected=$commit actual=$actualCommit"
     }
+
+    $autoCrlf = (git -C $catalogRoot config --get core.autocrlf).Trim()
+    if ($autoCrlf -ne 'false') {
+        throw "ACCEPTED_SOURCE_AUTOCRLF_NOT_DISABLED id=$sourceId actual=$autoCrlf"
+    }
+    Write-Host "ACCEPTED_SOURCE_CANONICAL_CHECKOUT=PASS ID=$sourceId COMMIT=$actualCommit AUTOCRLF=$autoCrlf"
 
     if (Test-Path $outputRoot) { Remove-Item $outputRoot -Recurse -Force }
     New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
