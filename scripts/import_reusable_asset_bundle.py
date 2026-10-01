@@ -89,7 +89,7 @@ def validate_unit(unit:dict[str,Any])->None:
     verification=unit.get('verification')
     if not isinstance(verification,dict): raise RuntimeError(f"KNOWLEDGE_UNIT_FIELD_NOT_OBJECT id={unit['knowledge_id']} field=verification")
     status=str(verification.get('status') or '')
-    if status not in {'verified','active'}: raise RuntimeError(f"KNOWLEDGE_UNIT_NOT_VERIFIED id={unit['knowledge_id']} status={status}")
+    if status != 'verified': raise RuntimeError(f"KNOWLEDGE_UNIT_NOT_VERIFIED id={unit['knowledge_id']} status={status}")
     provenance=unit.get('provenance')
     if not isinstance(provenance,dict) or not isinstance(provenance.get('catalog'),dict): raise RuntimeError(f"KNOWLEDGE_UNIT_CATALOG_PROVENANCE_MISSING={unit['knowledge_id']}")
     for k in ('repository','commit','asset_id'):
