@@ -61,7 +61,7 @@ Build the shortest useful system:
 4. add only the missing repository/knowledge adapter logic;
 5. add another component only after a measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS core. Windows real-environment validation has passed for installation, dependency health, repository indexing, embeddings, knowledge-graph build, and semantic retrieval. MCP client E2E and durable/reproducible Windows compatibility handling remain incomplete.
+`mcp-vector-search` 4.1.14 is the active OSS core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, and semantic retrieval regression have passed on the Master Windows environment. MCP client E2E and automatic projection/indexing of G-ACE knowledge records remain incomplete.
 
 ## Initial knowledge contract
 
@@ -85,47 +85,64 @@ Primary local root:
 ```text
 F:\G-ACE-KB
 ├─ repo\       # this repository
-├─ data\       # local KB/index data
+├─ data\       # local KB/index data and generated knowledge records
 ├─ runtime\    # OSS runtime
 ├─ assets\     # migration/input assets
 └─ .venv\      # local environment from preparation
 ```
 
-Only source, configuration, design, tests, and durable documentation belong in Git by default. Runtime downloads, generated indexes/data, caches, secrets, and local environments stay outside the repository unless a later design decision explicitly changes that boundary.
+Only source, configuration, design, tests, and durable documentation belong in Git by default. Runtime downloads, generated indexes/data, caches, secrets, generated knowledge-record exports, and local environments stay outside the repository unless a later design decision explicitly changes that boundary.
 
-## Windows bootstrap
+## Windows bootstrap and regression
 
-- `scripts/bootstrap-mvs-windows.ps1` installs the pinned OSS runtime and applies the two measured Windows/docs compatibility fixes.
+- `scripts/bootstrap-mvs-windows.ps1` installs the pinned OSS runtime and applies the measured Windows/docs compatibility fixes, including the Kuzu Windows-path compatibility handling.
 - `tests/verify-mvs-windows.ps1` verifies the installed compatibility state and CLI startup.
+- `tests/regression-mvs-windows.ps1` performs the tracked KB corpus full reindex, knowledge-graph build, status check, and the two required semantic retrieval regressions. It temporarily isolates the regression from a local `.gitignore` by changing `respect_gitignore`, then restores the prior value.
+
+## G-ACE knowledge adapter
+
+The active feature branch now contains the first deterministic repository-to-record adapter source:
+
+- `scripts/gace_knowledge_adapter.py` reads committed Git evidence and projects it into the initial G-ACE knowledge contract without replacing Git as authority;
+- `tests/test_gace_knowledge_adapter.py` validates record classification, marker extraction, clean tracked-tree gating, and JSONL contract output;
+- `scripts/export-knowledge-windows.ps1` writes generated records outside Git source under `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`.
+
+This source is implemented but is **not yet Windows runtime PASS** until the adapter test and real export are executed on the Master Windows environment.
 
 ## Current status
 
-**OSS SEARCH CORE VALIDATED / G-ACE ADAPTER NOT YET IMPLEMENTED**
+**OSS SEARCH CORE + REPOSITORY-MANAGED WINDOWS REGRESSION VALIDATED / G-ACE ADAPTER SOURCE IMPLEMENTED, REAL EXPORT PENDING**
 
-Completed:
+Validated on the Master Windows environment:
 
-- repository created;
-- README established as the development entry point;
-- Current Design established;
-- Project Tree established;
-- Design Delta established;
-- local repository cloned under `F:\G-ACE-KB\repo`;
-- `mcp-vector-search` 4.1.14 installed in the isolated local runtime;
-- Windows CLI/doctor validation passed after local compatibility handling;
-- real repository indexing passed: 4 files / 119 chunks / 119 embeddings;
-- knowledge graph build passed: 44 entities / 43 relationships;
-- semantic retrieval passed against known design and failure/root-cause/fix/validation content.
+- `mcp-vector-search` 4.1.14 isolated runtime;
+- repository-managed Windows bootstrap: PASS;
+- Windows compatibility verifier: PASS;
+- tracked KB corpus full reindex: 4 files / 161 chunks / 161 embeddings;
+- embedding model: `sentence-transformers/all-MiniLM-L6-v2`;
+- knowledge graph build: 58 entities / 57 relationships;
+- status: 4/4 indexed, version 4.1.14;
+- semantic design query returned `CURRENT_DESIGN.md` first;
+- semantic failure/root-cause/fix/validation query returned the expected repository knowledge;
+- real Windows regression marker: `MVS_REAL_REGRESSION=PASS`;
+- `respect_gitignore` was restored to its original `true` value after the regression.
 
-Implemented on the active feature branch, pending Windows real-runtime verification:
+Observed non-blocking evidence retained for follow-up instead of being silently hidden:
 
-- repository-managed Windows bootstrap/compatibility scripts for `mcp-vector-search` 4.1.14.
+- BM25 index build warning caused hybrid search to fall back to vector-only mode during the validated regression;
+- semantic searches emitted entity-matching warnings while still returning the required results;
+- the local `.gitignore` remains untracked and is not modified by the repository automation.
+
+Implemented on the active feature branch, not yet Windows-runtime validated:
+
+- deterministic G-ACE Git repository → knowledge-record adapter;
+- Windows wrapper exporting records outside Git source.
 
 Not yet completed:
 
-- Windows real-runtime verification of the repository-managed bootstrap;
+- Windows real-runtime adapter unit test and export validation;
+- automatic generated-record → `mcp-vector-search` indexing;
 - MCP server → AI client E2E validation;
-- G-ACE knowledge adapter implementation;
-- repository-to-KB ingestion;
-- end-to-end knowledge retrieval/reuse validation.
+- cross-repository knowledge reuse E2E.
 
 Do not report those incomplete items as implemented or validated.
