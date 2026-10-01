@@ -182,13 +182,28 @@ $mpContext = (& $Py -c 'from mcp_vector_search.core.chunk_processor import _get_
 if ($LASTEXITCODE -ne 0) { throw "MVS_MP_CONTEXT_PROBE_FAILED=$LASTEXITCODE" }
 if ($mpContext -ne 'spawn') { throw "WINDOWS_MP_CONTEXT_NOT_SPAWN=$mpContext" }
 
-$mcpServerProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ($mcpServerProbe -join [Environment]::NewLine)
-    throw "MVS_MCP_SERVER_CREATE_PROBE_FAILED=$LASTEXITCODE"
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    # MCPVectorSearchServer logs an informational line to stderr when no
+    # project root is supplied. Under PowerShell Stop mode, native stderr is
+    # promoted to NativeCommandError even when Python exits 0. Capture it
+    # without turning a successful compatibility probe into a false failure.
+    $ErrorActionPreference = 'Continue'
+    $mcpServerProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
+    $mcpServerProbeExit = $LASTEXITCODE
 }
-$mcpServerType = ([string]$mcpServerProbe[-1]).Trim()
-if ($mcpServerType -ne 'Server') { throw "MVS_MCP_SERVER_TYPE_UNEXPECTED=$mcpServerType" }
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($mcpServerProbeExit -ne 0) {
+    Write-Host ($mcpServerProbe -join [Environment]::NewLine)
+    throw "MVS_MCP_SERVER_CREATE_PROBE_FAILED=$mcpServerProbeExit"
+}
+$mcpServerType = @($mcpServerProbe | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -eq 'Server' } | Select-Object -Last 1)
+if ($mcpServerType.Count -ne 1 -or $mcpServerType[0] -ne 'Server') {
+    Write-Host ($mcpServerProbe -join [Environment]::NewLine)
+    throw 'MVS_MCP_SERVER_TYPE_UNEXPECTED'
+}
 
 Write-Host 'MVS_WINDOWS_BOOTSTRAP=PASS'
 Write-Host "RUNTIME=$Runtime"
