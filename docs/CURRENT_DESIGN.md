@@ -66,7 +66,7 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, repository regression, deterministic repository-to-record adaptation, generated knowledge-corpus indexing, direct semantic retrieval, real MCP stdio client retrieval, and cross-repository reuse have passed on the Master Windows environment.
+`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, deterministic full-history repository-to-record adaptation, generated knowledge-corpus indexing, persisted BM25 retention validation, real MCP stdio client retrieval, and cross-repository reuse have passed on the Master Windows environment.
 
 ## 6. G-ACE repository / knowledge adapter boundary
 
@@ -85,6 +85,8 @@ Markdown knowledge corpus
   ↓
 dedicated mcp-vector-search knowledge index
   ↓
+persisted BM25 + vector index
+  ↓
 MCP stdio server
   ↓
 AI/MCP client retrieval
@@ -99,11 +101,13 @@ Adapter and retrieval rules:
 - When a field is not supported by committed evidence, it remains empty rather than being synthesized.
 - Modified or staged tracked files block normal export so uncommitted work is not represented as durable knowledge.
 - Untracked local-only files do not block export.
+- Durable export defaults to all commits reachable from the requested revision. A positive `--max-count` is explicit bounded behavior for tests or temporary workflows; it must not silently evict older durable knowledge.
 - Generated JSONL, rendered corpus, MVS config, and MVS index stay outside repository source.
 - Multi-repository combining preserves the same initial contract and deduplicates identical repository/commit/type records; it does not merge or reconcile conflicting evidence.
 - Searchability is implemented by rendering one Markdown document per knowledge record rather than mutating the initial record contract to fit the OSS parser.
 - Windows compatibility is verified before generated-knowledge indexing and MCP execution; the pinned runtime may be repaired by the repository-managed compatibility layer and then reverified.
-- MCP validation requires real initialize/list-tools/tool-call exchange over stdio and return of known commit-backed records.
+- Persisted BM25 retention is validated below the CLI display layer by loading the BM25 index directly, querying a known full commit ID, resolving the returned chunk through LanceDB, and confirming the actual indexed evidence.
+- MCP validation requires real initialize/server-info/list-tools/tool-call exchange over stdio and return of known commit-backed records.
 - Cross-repository validation requires at least two distinct repository identities in the combined corpus and successful MCP retrieval of a known record from each.
 
 ## 7. Runtime / storage boundary
@@ -130,15 +134,18 @@ Knowledge-data extraction/normalization/admission from TGserver is not implement
 
 ## 8. Windows compatibility boundary
 
-The pinned upstream runtime currently requires repository-managed Windows/runtime compatibility handling for measured defects:
+The pinned upstream runtime requires repository-managed Windows/runtime compatibility handling for measured defects:
 
 - Unix-only `resource` import guard;
 - result display fallback when original similarity is `None`;
 - Kuzu cleanup path normalization;
 - multiprocessing context: Windows must use `spawn`;
-- MCP SDK compatibility: `mcp-vector-search` 4.1.14 uses MCP SDK 1.x decorator APIs while its dependency constraint permits installed MCP SDK 2.x; the repository bootstrap adapts the installed server to the 2.x constructor-handler API and current initialization-options path.
+- MCP SDK compatibility: `mcp-vector-search` 4.1.14 uses MCP SDK 1.x decorator APIs while its dependency constraint permits installed MCP SDK 2.x; the repository bootstrap adapts the installed server to the 2.x constructor-handler API and current initialization-options path;
+- embedding API compatibility: prefer the current embedding-dimension API and retain fallback only where required;
+- atomic rebuild compatibility: reopen the final BM25/vector backend after the temporary Lance path is finalized on Windows;
+- doc-only KG compatibility: do not attempt code-entity KG enrichment when the generated Markdown knowledge corpus contains no code entities.
 
-Compatibility source alone is not enough. `tests/verify-mvs-windows.ps1` verifies the installed runtime, actual multiprocessing context, and real MCP server creation compatibility.
+Compatibility source alone is not enough. `tests/verify-mvs-windows.ps1` verifies the installed runtime and exact compatibility state. `scripts/index-knowledge-windows.ps1` then fails closed if the previously observed BM25 fallback, embedding deprecation, or doc-only KG entity-warning regressions reappear.
 
 ## 9. Future boundary
 
@@ -152,17 +159,33 @@ Validated current capability:
 - repository-managed Windows bootstrap PASS;
 - Windows compatibility verifier PASS;
 - runtime multiprocessing context `spawn` PASS;
-- MCP SDK 2.x server compatibility probe PASS;
-- repository tracked-corpus reindex PASS: 4 files, 161 chunks, 161 embeddings;
-- repository knowledge graph PASS: 58 entities, 57 relationships;
-- repository semantic design and failure/root-cause/fix/validation retrieval PASS;
-- real repository regression gate PASS;
-- G-ACE knowledge adapter unit tests PASS: 5/5;
-- renderer tests PASS: 2/2;
-- generated knowledge export/index/retrieval PASS;
-- MCP stdio initialize/list-tools/status/search PASS;
+- MCP SDK 2.x server compatibility PASS;
+- embedding dimension API compatibility PASS;
+- atomic BM25 backend reopen compatibility PASS;
+- doc-only KG enhancement compatibility PASS;
+- repository tracked-corpus reindex and semantic regression PASS;
+- deterministic G-ACE knowledge adapter/renderer/combiner tests PASS;
+- durable generated knowledge export defaults to full reachable Git history;
+- latest full-history export PASS: 89 records;
+- historical retention gate PASS for `74e8171...` and `4912a442...`;
+- generated corpus PASS: 89 Markdown records;
+- generated index PASS: 89/89 files, 625 chunks, 625 embeddings;
+- generated knowledge graph PASS: 534 entities, 533 relationships;
+- persisted BM25 index PASS;
+- direct BM25 retention probe PASS for `74e8171...` with one matching indexed chunk;
+- direct BM25 retention probe PASS for `4912a442...` with one matching indexed chunk;
+- BM25 fallback-warning regression gate PASS;
+- embedding deprecation-warning regression gate PASS;
+- doc-only KG entity-warning regression gate PASS;
+- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=89`;
+- MCP stdio initialize/server-info/list-tools/status/search PASS;
+- MCP server metadata PASS: `SERVER=mcp-vector-search VERSION=0.4.0`;
+- MCP retrieval of `74e8171...` PASS in BM25 mode;
+- MCP retrieval of `4912a442...` PASS in BM25 mode;
+- `GACE_MCP_CLIENT_E2E=PASS`;
+- `GACE_MCP_WINDOWS_E2E=PASS`;
 - deterministic multi-repository combiner tests PASS: 3/3;
-- cross-repository export/combine PASS: 70 current records + 20 Astera records = 90 records;
+- validated cross-repository export/combine: 70 current records + 20 Astera records = 90 records;
 - cross-repository rendered corpus PASS: 90 Markdown records;
 - cross-repository index PASS: 90/90 files, 633 chunks, 633 embeddings;
 - cross-repository knowledge graph PASS: 540 entities, 539 relationships;
@@ -172,13 +195,9 @@ Validated current capability:
 - `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2`;
 - `CROSS_REPO_TEMP_CLEANUP=PASS`.
 
-Observed but not closed:
+Local-only evidence intentionally left untouched:
 
-- BM25 index build emits a non-fatal Lance warning and hybrid mode falls back to vector-only;
-- semantic searches can emit entity-matching warnings despite returning the required records;
-- the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
-- client-side initialization display can report MCP server name/version as `unknown` while initialization itself succeeds;
-- local `.gitignore` remains untracked and is intentionally not mutated by repository automation;
-- the pre-existing local `scripts/__pycache__/` remains untouched; current Python test commands suppress new bytecode generation.
+- local `.gitignore` remains untracked;
+- the pre-existing local `scripts/__pycache__/` remains untracked.
 
-The first-version repository knowledge reuse E2E boundary is closed. Remaining work in this repository is quality hardening and regression protection for the retained warning classes and runtime compatibility behavior.
+The first-version repository knowledge reuse E2E and the measured Windows quality-hardening boundary are closed. Knowledge-data processing/admission from TGserver remains a separate development scope.
