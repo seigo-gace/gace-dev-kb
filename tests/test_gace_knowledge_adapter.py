@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ ADAPTER_PATH = REPO_ROOT / "scripts" / "gace_knowledge_adapter.py"
 spec = importlib.util.spec_from_file_location("gace_knowledge_adapter", ADAPTER_PATH)
 assert spec and spec.loader
 adapter = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = adapter
 spec.loader.exec_module(adapter)
 
 
