@@ -32,7 +32,9 @@ jobs:
             scripts/import_modulecatalog_reusable_export.py \
             scripts/import_reusable_asset_bundle.py \
             scripts/replace_modulecatalog_reusable_snapshot.py \
-            tests/mcp_reusable_asset_e2e.py
+            scripts/accept_modulecatalog_delivery.py \
+            tests/mcp_reusable_asset_e2e.py \
+            tests/test_accept_modulecatalog_delivery.py
 
       - name: Node syntax gate
         run: node --check scripts/run_modulecatalog_reusable_export.mjs
@@ -42,7 +44,10 @@ jobs:
         run: |
           $files = @(
             'scripts/test-modulecatalog-reusable-export-windows.ps1',
-            'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1'
+            'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1',
+            'scripts/activate-modulecatalog-accepted-windows.ps1',
+            'scripts/receive-modulecatalog-kbdata-windows.ps1',
+            'scripts/process-modulecatalog-inbox-windows.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -62,6 +67,9 @@ jobs:
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
 
+      - name: Delivery acceptance boundary tests
+        run: python -B tests/test_accept_modulecatalog_delivery.py
+
       - name: Reusable active snapshot replacement tests
         run: python -B tests/test_replace_modulecatalog_reusable_snapshot.py
 
@@ -75,9 +83,9 @@ jobs:
           python -B tests/test_gace_knowledge_adapter.py
           python -B tests/test_import_verified_modulecatalog_skills.py
 
-      - name: Real ModuleCatalog 80-asset producer-consumer contract
+      - name: Real ModuleCatalog delivery acceptance contract
         env:
-          MODULECATALOG_COMMIT: f83461b79344e18dda145978fec5cb8f62896ad1
+          MODULECATALOG_COMMIT: 224d96615d4cd3a4c87ca0de581d6124a871a3fd
         run: |
           set -euo pipefail
           git clone https://github.com/seigo-gace/modular-catalog.git /tmp/modular-catalog
@@ -87,27 +95,32 @@ jobs:
             --output-root /tmp/modulecatalog-export \
             --catalog-commit "$MODULECATALOG_COMMIT" \
             --expected-asset-count 80
-          python -B scripts/import_modulecatalog_reusable_export.py \
-            --export-root /tmp/modulecatalog-export \
-            --output-root /tmp/gace-reusable-import \
-            --expected-catalog-commit "$MODULECATALOG_COMMIT" \
-            --expected-asset-count 80 \
-            --expected-record-count 720
+          python -B scripts/accept_modulecatalog_delivery.py \
+            --delivery-root /tmp/modulecatalog-export \
+            --accepted-root /tmp/gace-accepted/$MODULECATALOG_COMMIT \
+            --receipt /tmp/gace-receipts/$MODULECATALOG_COMMIT.json
           python - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
-          root = Path('/tmp/gace-reusable-import')
-          metadata = [json.loads(line) for line in (root / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
-          records = [line for line in (root / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
-          corpus = list((root / 'records').glob('*.md'))
-          assert len(metadata) == 720, len(metadata)
-          assert len(records) == 720, len(records)
-          assert len(corpus) == 720, len(corpus)
+          commit = os.environ['MODULECATALOG_COMMIT']
+          root = Path('/tmp/gace-accepted') / commit
+          state = json.loads((root / 'state.json').read_text())
+          metadata = [json.loads(line) for line in (root / 'projection' / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
+          records = [line for line in (root / 'projection' / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
+          corpus = list((root / 'projection' / 'records').glob('*.md'))
+          receipt = json.loads((Path('/tmp/gace-receipts') / f'{commit}.json').read_text())
+          assert state['status'] == 'ACCEPTED'
+          assert receipt['status'] == 'ACCEPTED'
+          assert state['assetCount'] == 80
+          assert state['knowledgeUnitCount'] == 720
+          assert len(metadata) == 720
+          assert len(records) == 720
+          assert len(corpus) == 720
           assert len({row['parent_asset_id'] for row in metadata}) == 80
           kinds = {row['knowledge_kind'] for row in metadata}
           required = {'discovery','documentation','design','logic','architecture','evidence','code','test_case'}
           assert required <= kinds, sorted(kinds)
           assert all(row['verification']['status'] == 'verified' for row in metadata)
-          assert all(row['_gace']['commit'] == 'f83461b79344e18dda145978fec5cb8f62896ad1' for row in metadata)
-          print(f'REAL_MODULECATALOG_CONTRACT=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)}')
+          assert all(row['_gace']['commit'] == commit for row in metadata)
+          print(f'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)}')
           PY
