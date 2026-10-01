@@ -209,8 +209,8 @@ if ($statusResult.Output -notmatch "Indexed Files:\s+$recordCount/$recordCount")
 }
 
 # This gate verifies durable identity retrieval, not semantic ranking quality.
-# Query the unique commit IDs directly, request machine-readable JSON, and keep
-# the semantic phrase retrieval check in the MCP E2E where it is already proven.
+# Query the unique full commit IDs directly, request machine-readable JSON, and
+# keep semantic phrase retrieval in the MCP E2E where it is already proven.
 $deterministicSearchOptions = @(
     '--project-root',$SearchRoot,
     '--limit','100',
@@ -226,21 +226,21 @@ $deterministicSearchOptions = @(
 
 Write-Host '=== CLI BM25 IDENTITY SEARCH: WINDOWS KUZU FIX ==='
 $kuzuResult = Invoke-MvsCapture `
-    -Arguments (@('search','74e8171') + $deterministicSearchOptions) `
+    -Arguments (@('search',$KnownKuzuCommit) + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 Assert-NoClosedWarningRegression -Output $kuzuResult.Output -Stage 'search-kuzu'
 Assert-CliJsonContainsCommit -Result $kuzuResult -Commit $KnownKuzuCommit -Label 'KNOWLEDGE_SEARCH_KUZU'
-Write-Host 'KNOWLEDGE_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25 QUERY=commit-id'
+Write-Host 'KNOWLEDGE_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25 QUERY=full-commit-id'
 
 Write-Host '=== CLI BM25 IDENTITY SEARCH: G-ACE ADAPTER ==='
 $adapterResult = Invoke-MvsCapture `
-    -Arguments (@('search','4912a442') + $deterministicSearchOptions) `
+    -Arguments (@('search',$KnownAdapterCommit) + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
 Assert-NoClosedWarningRegression -Output $adapterResult.Output -Stage 'search-adapter'
 Assert-CliJsonContainsCommit -Result $adapterResult -Commit $KnownAdapterCommit -Label 'KNOWLEDGE_SEARCH_ADAPTER'
-Write-Host 'KNOWLEDGE_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25 QUERY=commit-id'
+Write-Host 'KNOWLEDGE_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25 QUERY=full-commit-id'
 
 Write-Host 'MVS_BM25_WARNING_REGRESSION=PASS'
 Write-Host 'MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS'
