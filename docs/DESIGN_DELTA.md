@@ -72,7 +72,7 @@ Return `mcp-vector-search` to the first implementation candidate because its ins
 
 ## 2026-09-30 — mcp-vector-search Windows installation and CLI compatibility gate
 
-**Status:** INSTALL + CLI + DOCTOR PASS; index/search/MCP E2E still pending.
+**Status:** INSTALL + CLI + DOCTOR PASS; later entries supersede the remaining index/regression state.
 
 ### Installed runtime
 
@@ -101,7 +101,7 @@ The runtime copy was minimally patched so `resource` is imported only when `sys.
 
 A backup of the original installed file was retained as `main.py.gace-original`.
 
-This patch currently lives in the local installed OSS runtime, not in the G-ACE repository source and not upstream. Reinstallation/upgrading the package can overwrite it; reproducibility must be addressed before this runtime is treated as durable production infrastructure.
+This patch originally lived only in the local installed OSS runtime. A later design delta records the repository-managed bootstrap that made the compatibility handling reproducible.
 
 ### Validation after patch
 
@@ -113,27 +113,13 @@ This patch currently lives in the local installed OSS runtime, not in the G-ACE 
 
 Continue with `mcp-vector-search` as the active OSS-core candidate. Do not add another OSS core while this candidate is passing the current gates.
 
-### Remaining gates before adoption is complete
-
-1. initialize/index the real `F:\G-ACE-KB\repo` repository;
-2. prove retrieval against known README/design content;
-3. prove index data remains outside Git source as designed;
-4. prove MCP server operation usable by an AI client;
-5. make the Windows compatibility handling reproducible rather than relying on an undocumented manual site-packages edit;
-6. update README/Project Tree/system documentation according to the Documentation Gate after those capabilities are actually validated.
-
-### Applying commit
-
-This documentation commit records the measured Windows installation/compatibility result. It does not claim the remaining index/search/MCP gates have passed.
-
-
 ---
 
 ## 2026-09-30 — mcp-vector-search real index and semantic retrieval validated
 
-**Status:** index/search validated; MCP client E2E and G-ACE adapter remain incomplete.
+**Status:** superseded by the 2026-10-01 managed regression evidence below.
 
-### Evidence
+### Evidence at this point
 
 Windows real-environment execution against `F:\G-ACE-KB\repo` produced:
 
@@ -153,42 +139,123 @@ Two runtime-local compatibility issues were encountered:
 1. upstream CLI imported the Unix-only Python `resource` module on Windows;
 2. search-result rendering attempted percentage formatting when the original similarity value was `None`.
 
-Both were minimally patched in the isolated installed runtime and the resulting CLI/search gates passed. These manual site-packages edits are not yet durable repository implementation and may be overwritten by reinstall/upgrade.
+Both were minimally patched in the isolated installed runtime and the resulting CLI/search gates passed.
 
-A Windows-path knowledge-graph delete warning and entity-matching warnings were also observed. The graph subsequently completed successfully. These warnings are retained as unresolved compatibility evidence rather than being reported as fixed.
+A Windows-path knowledge-graph delete warning and entity-matching warnings were also observed. The graph subsequently completed successfully. These warnings were retained as unresolved compatibility evidence rather than being reported as fixed.
 
 ### Current design decision
 
 Adopt `mcp-vector-search` as the active OSS search/index core for the current implementation path. Do not add another generic search/KB core without a measured gap.
 
-The next custom implementation is limited to the G-ACE-specific repository/knowledge adapter and reproducible Windows compatibility/bootstrap handling.
-
-### Remaining gates
-
-- repository-managed reproducible Windows compatibility/bootstrap;
-- G-ACE knowledge adapter;
-- automatic repository-to-KB ingestion;
-- MCP server → AI-client E2E;
-- cross-repository reuse E2E.
-
-### Applying commits
-
-This delta is documentation of already observed runtime evidence. The documentation-alignment commits following the prior baseline update record the current verified state; they do not claim the remaining gates are complete.
-
-
 ---
 
 ## 2026-09-30 — repository-managed Windows compatibility bootstrap added
 
-**Status:** source implemented on feature branch; Windows runtime verification pending.
+**Status:** superseded by the verified 2026-10-01 runtime result below.
 
 ### Change
 
-Added a repository-managed PowerShell bootstrap for pinned `mcp-vector-search==4.1.14` plus a verification script. The bootstrap reproduces the two compatibility changes previously applied manually in site-packages:
-
-- guard the Unix-only `resource` import on Windows;
-- fall back to the final similarity score when the original similarity is `None` during result rendering.
+Added a repository-managed PowerShell bootstrap for pinned `mcp-vector-search==4.1.14` plus verification/regression scripts. The bootstrap reproduces the measured compatibility changes and later gained Windows Kuzu path handling.
 
 ### Boundary
 
-This removes the design dependence on undocumented manual edits at the source level, but it is not yet runtime PASS. The scripts must be executed against the Master Windows runtime and the same index/search failure conditions must be retested before this gate is closed.
+Repository source removed the dependence on undocumented manual site-packages edits, but runtime PASS still required execution on the Master Windows environment. That execution is recorded below.
+
+---
+
+## 2026-10-01 — repository-managed Windows bootstrap and real regression validated
+
+**Status:** PASS for the current Windows OSS-core regression boundary.
+
+### Implemented/new design
+
+The Windows compatibility path is now repository-managed rather than dependent on one-off manual edits. The active feature branch contains:
+
+- pinned `mcp-vector-search==4.1.14` bootstrap;
+- Windows `resource` import guard handling;
+- result-rendering fallback when original similarity is `None`;
+- Kuzu Windows path normalization for knowledge-graph cleanup;
+- installed-runtime compatibility verifier;
+- real regression gate that isolates the tracked KB corpus from local `.gitignore` behavior, performs a force reindex, validates KG/status/search, then restores the original `respect_gitignore` value.
+
+### Applying implementation commits
+
+- `fde697702ae7b8caff7c95fa6dc47fb22b28963a` — make Kuzu runtime patch robust to line-ending/indent differences;
+- `f996f7541ead13ec69d942ee6b67af023b9aa2b3` — avoid PowerShell native-warning false failures in regression;
+- `71da8659e3bc5ad517ade089278facc479e7b598` — stream regression progress and bound execution with timeouts;
+- `a1067814fd4ce9da3b0b432cbe5316a910de1d9e` — isolate tracked-corpus regression from local `.gitignore` and restore settings.
+
+### Real Windows evidence
+
+Master Windows execution produced:
+
+- `MVS_WINDOWS_BOOTSTRAP=PASS`;
+- `MVS_WINDOWS_COMPAT_VERIFY=PASS`;
+- tracked KB documents: 4;
+- full reindex: 4 files / 161 chunks / 161 embeddings;
+- embedding model: `sentence-transformers/all-MiniLM-L6-v2`;
+- knowledge graph: 58 entities / 57 relationships;
+- status: 4/4 indexed, mcp-vector-search 4.1.14;
+- semantic design query: `CURRENT_DESIGN.md` ranked first;
+- semantic failure/root-cause/fix/validation query: expected repository knowledge returned;
+- `MVS_REAL_REGRESSION=PASS`;
+- `respect_gitignore` restored to its original `true` value after regression.
+
+### Retained unresolved evidence
+
+The gate passed, but the following warnings are intentionally retained as follow-up evidence:
+
+- BM25 index build emitted a non-fatal Lance file warning, causing hybrid search to fall back to vector-only mode;
+- semantic searches emitted `Could not find entity matching ...` warnings while still returning the required results;
+- local `.gitignore` remains untracked and is intentionally not modified by the repository automation.
+
+These warnings are not reclassified as fixed merely because the current regression passes.
+
+### Current decision
+
+The generic OSS search/index core and its repository-managed Windows regression boundary are validated for the current repository corpus. The next custom work is limited to G-ACE-specific repository/knowledge adaptation and then automatic ingestion/reuse E2E.
+
+---
+
+## 2026-10-01 — deterministic G-ACE repository knowledge adapter source added
+
+**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS TEST + REAL EXPORT PENDING.
+
+### Previous design
+
+The repository defined the initial knowledge contract and stated that only G-ACE-specific repository/knowledge integration should be custom-built, but no durable adapter source existed.
+
+### Implemented/new design
+
+Added a deterministic Git-based adapter that projects committed repository evidence into the initial contract:
+
+- `type`
+- `repository`
+- `commit`
+- `summary`
+- `cause`
+- `fix`
+- `validation`
+- `source`
+
+Rules:
+
+- Git remains source of truth;
+- no AI synthesis is used to fill missing evidence;
+- explicit commit-body markers `Cause:`, `Fix:`, `Validation:`, and `Source:` populate corresponding fields when present;
+- missing evidence remains empty;
+- conventional commit prefix and changed paths provide deterministic record classification;
+- modified/staged tracked files block normal export;
+- untracked files do not block export;
+- generated JSONL is written outside Git source under `F:\G-ACE-KB\data\knowledge-records`;
+- the adapter does not create another MCP server; generic MCP/search remains the responsibility of `mcp-vector-search`.
+
+### Applying implementation commits
+
+- `4912a442fc44be5fd2bd8e8796af8bd807e954c8` — deterministic knowledge adapter;
+- `daa68d5611d6fdb7aa48b6c6703ec997a835d79f` — adapter contract/unit tests;
+- `9ef50415772bef11961fe709a836239f34af5cf7` — Windows export wrapper.
+
+### Validation state
+
+Repository source and tests exist, but they have not yet been executed on the Master Windows runtime. Therefore this entry does **not** claim adapter PASS, automatic generated-record indexing, MCP client E2E, or cross-repository reuse E2E.
