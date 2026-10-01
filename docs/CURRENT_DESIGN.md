@@ -79,7 +79,7 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS search/index core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, semantic retrieval regression, deterministic repository-to-record adapter, and real JSONL export have passed on the Master Windows environment. Generated-record indexing source now exists and is the next runtime gate.
+`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, repository regression, deterministic repository-to-record adaptation, generated knowledge-corpus indexing, and semantic retrieval have passed on the Master Windows environment. The next runtime gate is retrieval through the real MCP stdio protocol rather than direct CLI search.
 
 ## 6. G-ACE repository / knowledge adapter boundary
 
@@ -106,10 +106,14 @@ deterministic Markdown knowledge corpus outside Git source
   ↓
 dedicated mcp-vector-search knowledge index
   ↓
-semantic retrieval / later reuse
+semantic retrieval
+  ↓
+MCP stdio server
+  ↓
+AI/MCP client
 ```
 
-Adapter rules:
+Adapter and retrieval rules:
 
 - Git remains authority; the adapter only projects committed evidence.
 - Generic MCP/search capability stays in `mcp-vector-search`; do not build a second MCP server for the adapter.
@@ -118,10 +122,10 @@ Adapter rules:
 - When a field is not supported by committed evidence, it remains empty rather than being synthesized.
 - Modified or staged tracked files block normal export so uncommitted work is not represented as durable knowledge.
 - Untracked local-only files do not block export.
-- Generated JSONL, rendered corpus, MVS config, and MVS index stay outside the repository source tree under `F:\G-ACE-KB\data`.
-- Searchability is implemented by rendering one Markdown document per knowledge record rather than changing the initial knowledge contract merely to match an OSS input format.
-
-Master Windows evidence has validated the adapter unit tests and a real 36-record JSONL export. The generated Markdown corpus/index/retrieval pipeline is implemented in source but not yet runtime PASS.
+- Generated JSONL, rendered corpus, MVS config, and MVS index stay outside repository source under `F:\G-ACE-KB\data`.
+- Searchability is implemented by rendering one Markdown document per knowledge record rather than mutating the initial record contract to fit the OSS parser.
+- Windows compatibility is verified before generated-knowledge indexing; the pipeline may repair the pinned runtime compatibility layer and then reverify it.
+- MCP E2E must prove a real initialize/list-tools/tool-call exchange over stdio and return known commit-backed records before MCP integration is called validated.
 
 ## 7. Runtime / storage boundary
 
@@ -135,51 +139,67 @@ F:\G-ACE-KB
 │  └─ knowledge-search\
 │     ├─ records\              # rendered Markdown corpus; not Git source
 │     └─ .mcp-vector-search\   # generated search config/index; not Git source
-├─ runtime\    # OSS runtime; not Git source unless explicitly vendored later
-├─ assets\     # local migration/input assets
-└─ .venv\      # local environment from earlier preparation; not Git source
+├─ runtime\
+│  └─ mcp-vector-search\       # pinned 4.1.14 runtime with measured Windows compatibility layer
+├─ assets\
+└─ .venv\
 ```
 
-Git stores source, configuration, design, tests, and durable documentation. Large indexes, caches, runtime downloads, generated data, generated knowledge-record exports, secrets, and local environments stay outside Git unless a later design decision explicitly changes that boundary.
+Git stores source, configuration, design, tests, and durable documentation. Large indexes, caches, runtime downloads, generated data, generated knowledge-record exports, secrets, and local environments stay outside Git unless a later explicit design decision changes that boundary.
 
-## 8. Future boundary
+## 8. Windows compatibility boundary
+
+The pinned upstream runtime currently requires repository-managed Windows compatibility handling for measured defects:
+
+- Unix-only `resource` import guard;
+- result display fallback when original similarity is `None`;
+- Kuzu cleanup path normalization;
+- multiprocessing context: Windows must use `spawn`, not upstream's non-macOS `fork` default.
+
+Compatibility source alone is not enough: `tests/verify-mvs-windows.ps1` verifies the installed runtime and executes `_get_mp_context()` to require `spawn` on Windows.
+
+## 9. Future boundary
 
 Astera-based KB architecture is future implementation material. It must not be represented as current implementation until implemented and validated. Future design material must remain clearly separated from the current baseline.
 
-## 9. Current implementation boundary (2026-10-01)
+## 10. Current implementation boundary (2026-10-01)
 
 Validated current capability:
 
 - isolated OSS runtime under `F:\G-ACE-KB\runtime\mcp-vector-search`;
 - repository-managed Windows bootstrap PASS;
 - Windows compatibility verifier PASS;
-- full tracked-corpus reindex PASS: 4 files, 161 chunks, 161 embeddings;
-- knowledge graph build PASS: 58 entities, 57 relationships;
-- status PASS: 4/4 indexed with mcp-vector-search 4.1.14;
-- semantic design retrieval PASS;
-- semantic failure/root-cause/fix/validation retrieval PASS;
-- real Windows regression gate PASS;
-- temporary regression override of `respect_gitignore` restored to its original `true` value;
+- runtime multiprocessing context `spawn` PASS;
+- repository tracked-corpus reindex PASS: 4 files, 161 chunks, 161 embeddings;
+- repository knowledge graph PASS: 58 entities, 57 relationships;
+- repository semantic design and failure/root-cause/fix/validation retrieval PASS;
+- real repository regression gate PASS;
 - G-ACE knowledge adapter unit tests PASS: 5/5;
-- real G-ACE JSONL export PASS: 36 records;
-- Windows export wrapper PASS: 36 records.
+- renderer tests PASS: 2/2;
+- latest full knowledge export PASS: 47 records;
+- generated knowledge corpus PASS: 47 Markdown records;
+- generated knowledge index PASS: 47/47 files, 331 chunks, 331 embeddings;
+- generated knowledge graph PASS: 282 entities, 281 relationships;
+- semantic retrieval of Kuzu compatibility record `74e8171...` PASS and ranked first;
+- semantic retrieval of G-ACE adapter record `4912a442...` PASS and ranked first;
+- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=47`.
 
 Observed but not closed:
 
-- BM25 index build emitted a non-fatal warning and hybrid search fell back to vector-only mode during repository regression;
-- semantic searches emitted entity-matching warnings despite returning the required results;
+- BM25 index build emits a non-fatal Lance warning and hybrid mode falls back to vector-only;
+- semantic searches emit entity-matching warnings despite returning the required records;
+- the embedding library emits a deprecation `FutureWarning` for `get_sentence_embedding_dimension`;
 - local `.gitignore` remains untracked and is intentionally not mutated by repository automation;
-- the first adapter test run created local `scripts/__pycache__/`; future test execution disables bytecode generation, while the existing local cache remains untouched pending explicit cleanup.
+- the pre-existing local `scripts/__pycache__/` remains untouched; current Python test commands suppress new bytecode generation.
 
 Implemented in repository source, pending Windows runtime validation:
 
-- deterministic JSONL → Markdown knowledge corpus renderer;
-- renderer tests;
-- generated-record → dedicated `mcp-vector-search` knowledge indexing wrapper;
-- known-record retrieval gates for the Kuzu Windows-path fix and G-ACE adapter implementation.
+- MCP stdio server → MCP Python client E2E;
+- MCP initialize and tool-list verification;
+- MCP `get_project_status` call;
+- MCP `search_code` retrieval gates for `74e8171...` and `4912a442...`.
 
-Not yet implemented or not yet validated:
+Not yet completed or not yet validated:
 
-- Windows real-runtime knowledge corpus/index/retrieval PASS;
-- MCP server to AI-client E2E;
+- Master Windows `GACE_MCP_CLIENT_E2E=PASS`;
 - cross-repository knowledge reuse E2E.
