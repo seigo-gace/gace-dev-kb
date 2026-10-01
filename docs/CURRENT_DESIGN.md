@@ -79,7 +79,7 @@ Shortest-path rule:
 4. Add only the missing G-ACE repository/knowledge adapter logic.
 5. Add another dependency only after a real measured gap is confirmed.
 
-`mcp-vector-search` 4.1.14 is the active OSS search/index core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, and semantic retrieval regression have passed on the Master Windows environment. This does not yet establish MCP client E2E, automatic generated-record indexing, or cross-repository reuse E2E.
+`mcp-vector-search` 4.1.14 is the active OSS search/index core. The repository-managed Windows bootstrap, compatibility verification, real full reindex, knowledge-graph build, semantic retrieval regression, deterministic repository-to-record adapter, and real JSONL export have passed on the Master Windows environment. Generated-record indexing source now exists and is the next runtime gate.
 
 ## 6. G-ACE repository / knowledge adapter boundary
 
@@ -100,9 +100,13 @@ initial knowledge record
   ├─ validation
   └─ source
   ↓
-generated knowledge projection outside Git source
+generated JSONL outside Git source
   ↓
-mcp-vector-search indexing / retrieval
+deterministic Markdown knowledge corpus outside Git source
+  ↓
+dedicated mcp-vector-search knowledge index
+  ↓
+semantic retrieval / later reuse
 ```
 
 Adapter rules:
@@ -110,13 +114,14 @@ Adapter rules:
 - Git remains authority; the adapter only projects committed evidence.
 - Generic MCP/search capability stays in `mcp-vector-search`; do not build a second MCP server for the adapter.
 - Record generation must be deterministic and must not invent missing cause, fix, validation, or source evidence.
-- Explicit commit-body markers (`Cause:`, `Fix:`, `Validation:`, `Source:`) may populate the corresponding fields.
+- Explicit commit-body markers (`Cause:`, `Fix:`, `Validation:`, `Source:`) may populate corresponding fields.
 - When a field is not supported by committed evidence, it remains empty rather than being synthesized.
 - Modified or staged tracked files block normal export so uncommitted work is not represented as durable knowledge.
-- Untracked local-only files do not block export; this preserves the current local `.gitignore` evidence without treating it as committed knowledge.
-- Generated exports stay outside the repository source tree under the local data boundary.
+- Untracked local-only files do not block export.
+- Generated JSONL, rendered corpus, MVS config, and MVS index stay outside the repository source tree under `F:\G-ACE-KB\data`.
+- Searchability is implemented by rendering one Markdown document per knowledge record rather than changing the initial knowledge contract merely to match an OSS input format.
 
-The first adapter source and Windows export wrapper are implemented on the active feature branch. They remain pending Master Windows runtime validation before they are considered PASS.
+Master Windows evidence has validated the adapter unit tests and a real 36-record JSONL export. The generated Markdown corpus/index/retrieval pipeline is implemented in source but not yet runtime PASS.
 
 ## 7. Runtime / storage boundary
 
@@ -125,7 +130,11 @@ Local root:
 ```text
 F:\G-ACE-KB
 ├─ repo\       # this Git repository
-├─ data\       # local KB/index data and generated knowledge records; not Git source
+├─ data\
+│  ├─ knowledge-records\       # generated JSONL; not Git source
+│  └─ knowledge-search\
+│     ├─ records\              # rendered Markdown corpus; not Git source
+│     └─ .mcp-vector-search\   # generated search config/index; not Git source
 ├─ runtime\    # OSS runtime; not Git source unless explicitly vendored later
 ├─ assets\     # local migration/input assets
 └─ .venv\      # local environment from earlier preparation; not Git source
@@ -150,24 +159,27 @@ Validated current capability:
 - semantic design retrieval PASS;
 - semantic failure/root-cause/fix/validation retrieval PASS;
 - real Windows regression gate PASS;
-- temporary regression override of `respect_gitignore` restored to its original `true` value.
+- temporary regression override of `respect_gitignore` restored to its original `true` value;
+- G-ACE knowledge adapter unit tests PASS: 5/5;
+- real G-ACE JSONL export PASS: 36 records;
+- Windows export wrapper PASS: 36 records.
 
 Observed but not closed:
 
-- BM25 index build emitted a non-fatal warning and hybrid search fell back to vector-only mode during regression;
+- BM25 index build emitted a non-fatal warning and hybrid search fell back to vector-only mode during repository regression;
 - semantic searches emitted entity-matching warnings despite returning the required results;
-- local `.gitignore` remains untracked and is intentionally not mutated by repository automation.
+- local `.gitignore` remains untracked and is intentionally not mutated by repository automation;
+- the first adapter test run created local `scripts/__pycache__/`; future test execution disables bytecode generation, while the existing local cache remains untouched pending explicit cleanup.
 
 Implemented in repository source, pending Windows runtime validation:
 
-- deterministic G-ACE Git repository → knowledge-record adapter;
-- adapter unit tests;
-- Windows export wrapper writing JSONL outside Git source.
+- deterministic JSONL → Markdown knowledge corpus renderer;
+- renderer tests;
+- generated-record → dedicated `mcp-vector-search` knowledge indexing wrapper;
+- known-record retrieval gates for the Kuzu Windows-path fix and G-ACE adapter implementation.
 
 Not yet implemented or not yet validated:
 
-- Windows real-runtime adapter unit-test PASS;
-- Windows real export PASS;
-- automatic generated-record → mcp-vector-search indexing;
+- Windows real-runtime knowledge corpus/index/retrieval PASS;
 - MCP server to AI-client E2E;
 - cross-repository knowledge reuse E2E.
