@@ -2,88 +2,83 @@
 
 ## Purpose
 
-G-ACE KB must accept and search **reusable development assets**, not only Skills.
-ModuleCatalog is the canonical source. G-ACE KB stores a searchable projection that can be rebuilt from a pinned ModuleCatalog commit.
+G-ACE KB accepts and searches **reusable development assets**, not only Skills.
+ModuleCatalog is the canonical repository. G-ACE KB stores a searchable runtime projection that can be rebuilt from a pinned ModuleCatalog commit.
 
-Reusable asset kinds include, but are not limited to:
-`code`, `logic`, `architecture`, `design`, `contract`, `capability`, `test_case`, `evidence`, `pattern`, `workflow`, `configuration`, `integration`, `remediation`.
+Reusable value includes code, logic, architecture, design, contracts, capabilities, test cases, evidence, patterns, workflows, configuration, integrations, remediation knowledge, and future reusable asset kinds.
 
-## Non-negotiable boundaries
+## Producer / consumer boundary
 
-- ModuleCatalog canonical data is never overwritten by KB-derived data.
-- Missing facts stay missing/unknown; the KB importer never fabricates canonical fields.
-- AI-derived metadata must be marked `data_class=derived` and include non-empty `derivation.derived_from`.
-- A ModuleCatalog Asset and a searchable Knowledge Unit are different concepts. One Asset may produce many Knowledge Units.
-- One export bundle may contain one Asset or many Assets; every Knowledge Unit must resolve to exactly one declared parent Asset.
-- All Knowledge Units must retain a path back to the parent Asset and pinned ModuleCatalog commit.
-- The existing eight-field G-ACE record remains a compatibility/search envelope. It is not the full reusable-asset model.
+ModuleCatalog owns canonical asset creation, verification, provenance, integrity, and export.
+G-ACE KB owns admission, searchable projection, BM25 / Vector / Knowledge Graph indexing, MCP retrieval, and PC-side runtime use.
 
-## Bundle layout
+The KB must never rewrite ModuleCatalog canonical data. Missing facts remain missing or unknown. Derived information remains visibly derived.
 
-A v1 bundle is a directory inside a pinned ModuleCatalog checkout containing:
+## Actual ModuleCatalog export format
+
+The current producer contract is `gace.reusable-asset.v1`.
+A full export is generated outside the ModuleCatalog working tree and has this layout:
 
 ```text
+<export-root>/
+├─ manifest.json
+└─ assets/
+   ├─ <asset-id>/
+   │  ├─ asset.json
+   │  ├─ knowledge-units.jsonl
+   │  ├─ relationships.jsonl
+   │  ├─ cases.jsonl
+   │  └─ manifest.json
+   └─ ...
+```
+
+The top-level `manifest.json` identifies the exact catalog repository and commit and declares each exported Asset with its source `assetHash`, generated `bundleHash`, Knowledge Unit count, relationship count, and case count.
+
+Each per-Asset `manifest.json` uses SHA-256 and covers:
+
+```text
+asset.json
 knowledge-units.jsonl
-manifest.json
-asset.json       # single-Asset bundle
-        OR
-assets.jsonl     # multi-Asset / catalog-level bundle
+relationships.jsonl
+cases.jsonl
 ```
 
-Exactly one Asset descriptor form is allowed: `asset.json` or `assets.jsonl`, never both.
-This allows a single reusable Asset to be exported independently, while also allowing a full Catalog batch such as the current 80-Asset set to be delivered as one verified bundle.
+The KB importer verifies declared size/hash values, the recomputed bundle hash, source asset hash, catalog repository, catalog commit, asset id, and asset path before admission.
 
-Additional canonical files may exist and must be listed in `manifest.json` when they are part of the bundle.
+## Asset and Knowledge Unit are different concepts
 
-### asset.json — single Asset
+A ModuleCatalog Asset is the canonical package.
+A Knowledge Unit is an independently searchable/reusable projection from that Asset.
 
-Required example:
-
-```json
-{
-  "schema_version": 1,
-  "asset_id": "approval-route-resolver",
-  "name": "Approval Route Resolver"
-}
-```
-
-### assets.jsonl — multiple Assets
-
-One JSON object per parent Asset. Each object uses the same identity contract as `asset.json`.
-
-```jsonl
-{"schema_version":1,"asset_id":"approval-route-resolver","name":"Approval Route Resolver"}
-{"schema_version":1,"asset_id":"architecture-fit-evaluator","name":"Architecture Fit Evaluator"}
-```
-
-### knowledge-units.jsonl
-
-One JSON object per independently searchable/reusable unit.
-Required top-level fields:
+One Asset may therefore produce many Knowledge Units:
 
 ```text
-schema_version
-knowledge_id
-parent_asset_id
-asset_kind
-name
-summary
-verification
-provenance
-data_class
+Asset
+├─ overview/discovery
+├─ documentation
+├─ design
+├─ logic
+├─ architecture
+├─ evidence
+├─ code unit(s)
+└─ test-case unit(s)
 ```
 
-Recommended structured sections:
+Every Knowledge Unit keeps `parent_asset_id`, so any search result can return to the parent Asset and exact pinned ModuleCatalog commit.
+
+## asset.json
+
+`asset.json` is the structured Reusable Asset Schema v1 projection.
+The KB requires these structured sections:
 
 ```text
+identity
 classification
 discovery
 applicability
 contract
-constraints
 composition
 implementation
-cases
 verification
 provenance
 lifecycle
@@ -91,106 +86,319 @@ integrity
 derivation
 ```
 
-### Semantics
+### identity
 
-`classification`: domains/layers/languages/runtimes/tags.
+Contains Asset identity such as:
 
-`discovery`: purpose/responsibility/capabilities/keywords/semantic terms. This is used to discover what an asset can do.
+```text
+asset_id
+name
+version
+asset_kind
+symbol
+```
 
-`applicability`: use_when/do_not_use_when/preconditions/required_context/failure_conditions. This is used to decide whether the asset should be used for the current problem.
+`asset_kind` may be `unknown` when ModuleCatalog has no canonical basis for a stronger classification. The KB does not invent a better value.
 
-`contract`: inputs/outputs/required_fields/optional_fields/error_behavior/side_effects/mutation_authority.
+### classification
 
-`composition`: depends_on/requires/recommended_before/recommended_after/complements/alternative_to/conflicts_with/supersedes.
+Searchable classification data:
 
-`implementation`: language/runtime/entrypoint/symbol/source_files/dependencies.
+```text
+domains
+layers
+languages
+runtimes
+tags
+```
 
-`cases`: verified reusable usage/test cases. Test data is both verification evidence and reusable knowledge.
+These values remain separate semantic fields; they are not collapsed into one generic tag list.
 
-`verification`: status/verified_at/validation_boundary/normal_test/user_test/known_unverified. PASS claims must not exceed the actual verified boundary. Admission requires `verification.status=verified`.
+### discovery
 
-`provenance`: must contain `catalog.repository`, `catalog.commit`, and `catalog.asset_id`. `origin` should be preserved separately when known.
+Used to discover what the parent Asset is for:
 
-`lifecycle`: optional status from `experimental`, `verified`, `active`, `deprecated`, `superseded`, `retired`. Lifecycle describes asset state and is separate from the admission verification status.
+```text
+summary
+purpose
+responsibility
+capabilities
+keywords
+semantic_terms
+```
 
-`integrity`: asset hash, meta hash, manifest algorithm, or other integrity data.
+Canonical values are preserved. Deterministically derived keywords remain identifiable through derivation metadata.
 
-`data_class`: `canonical` or `derived`.
+### applicability
 
-`derivation`: required for derived units. `derived_from` must identify the canonical inputs used to produce the derived metadata.
+Used to decide whether an Asset should be used:
 
-## Search projection
+```text
+use_when
+do_not_use_when
+preconditions
+required_context
+failure_conditions
+```
 
-For every Knowledge Unit, G-ACE produces:
+The current producer deliberately leaves these empty when the current canonical Asset does not contain enough information. The KB must preserve that boundary rather than infer canonical facts.
 
-1. `knowledge-records.jsonl` — legacy eight-field envelope for compatibility.
-2. `knowledge-metadata.jsonl` — full structured reusable-asset data plus `_gace` projection metadata.
-3. `records/*.md` — rich deterministic Markdown containing structured fields so BM25, Vector search, and Knowledge Graph can index capability, applicability, contract, cases, constraints, relationships, provenance, lifecycle, etc.
+### contract
 
-The eight-field envelope is:
+Used to understand execution/reuse compatibility:
+
+```text
+status
+inputs
+outputs
+required_fields
+optional_fields
+error_behavior
+side_effects
+mutation_authority
+```
+
+Unknown or not-recorded values remain unknown/not recorded.
+
+### composition
+
+Used for combination and Knowledge Graph relations:
+
+```text
+depends_on
+requires
+recommended_before
+recommended_after
+complements
+alternative_to
+conflicts_with
+supersedes
+```
+
+### implementation
+
+Used to locate real reusable implementation:
+
+```text
+languages
+runtimes
+entrypoints
+source_files
+dependencies
+```
+
+### verification
+
+Admission requires:
+
+```text
+verification.status = verified
+```
+
+Normal/User evidence, verified timestamp, validation boundary and known-unverified scope are retained. The KB must never widen a PASS claim beyond the producer's evidence boundary.
+
+### provenance
+
+Both provenance layers are retained:
+
+```text
+origin.repository / origin.commit
+catalog.repository / catalog.commit / catalog.asset_path / catalog.asset_id
+```
+
+Origin and Catalog provenance are different facts and must not be collapsed.
+
+### lifecycle
+
+Lifecycle remains independent from verification status.
+It is searchable so retired/deprecated/superseded assets can be distinguished from current ones.
+
+### integrity
+
+The KB retains source Asset hash, meta hash, manifest algorithm/file data, plus generated bundle hash.
+
+### derivation
+
+Canonical sources and derived fields remain separate. Derived data never silently becomes canonical truth.
+
+## knowledge-units.jsonl
+
+The actual producer emits one object per independently searchable unit with:
+
+```text
+schema_version
+knowledge_id
+parent_asset_id
+knowledge_kind
+title
+content
+source_paths
+content_status
+derivation
+```
+
+`knowledge_kind` is the main search-unit type, for example:
+
+```text
+discovery
+documentation
+design
+logic
+architecture
+evidence
+code
+test_case
+```
+
+This is intentionally distinct from the parent Asset's `asset_kind`.
+The KB indexes both.
+
+## relationships.jsonl
+
+Relationships are first-class reusable data.
+Current producer relations include Asset → Knowledge Unit `contains` edges and resolvable canonical `depends_on` edges.
+
+The KB verifies that every relationship target resolves to a declared Asset or Knowledge Unit before admission.
+These relations are retained for current Markdown search and future stronger Knowledge Graph use.
+
+## cases.jsonl
+
+Test data is both verification evidence and reusable knowledge.
+Current Case records preserve:
+
+```text
+case_id
+parent_asset_id
+case_type
+scenario
+input
+expected
+actual
+result
+source_test
+test_content
+extraction_status
+derivation
+```
+
+When the producer cannot deterministically extract scenario/input/actual, the values remain null and `source_test` plus real test content remain available. The KB must not invent them.
+
+## KB search projection
+
+For each imported Knowledge Unit, G-ACE generates:
+
+1. `knowledge-records.jsonl` — existing eight-field compatibility envelope.
+2. `knowledge-metadata.jsonl` — full reusable-asset search metadata, including parent Asset fields and Knowledge Unit content.
+3. `records/*.md` — deterministic rich search documents for BM25 / Vector / Knowledge Graph indexing.
+
+The eight-field envelope remains only a compatibility layer:
 
 ```text
 type=reusable_asset
-repository=<catalog repository>
+repository=seigo-gace/modular-catalog
 commit=<pinned catalog commit>
-summary=<knowledge unit summary>
+summary=<parent summary + unit title + knowledge kind>
 cause=""
 fix=""
-validation=<actual verification boundary>
-source=<exact ModuleCatalog bundle + knowledge_id pointer>
+validation=<actual parent Asset verification boundary>
+source=modulecatalog:<repo>@<commit>#assets/<asset-id>::<knowledge-id>
 ```
 
-`cause` and `fix` stay empty unless the canonical asset actually represents a cause/fix event. They are never fabricated for generic reusable assets.
+`cause` and `fix` stay empty unless the canonical source really represents a cause/fix event. They are never fabricated for generic reusable assets.
 
-## Integrity / admission gate
-
-A bundle is rejected if any of these fail:
-
-- manifest algorithm is not SHA-256;
-- manifested file size or hash mismatches;
-- `knowledge-units.jsonl` is absent/not manifested;
-- neither or both of `asset.json` and `assets.jsonl` exist;
-- the chosen Asset descriptor is not manifested;
-- duplicate Asset IDs exist;
-- duplicate Knowledge IDs exist;
-- a Knowledge Unit references an undeclared parent Asset;
-- `provenance.catalog.asset_id` differs from `parent_asset_id`;
-- ModuleCatalog commit in provenance differs from checked-out HEAD;
-- `verification.status` is not exactly `verified`;
-- a derived unit lacks derivation sources;
-- lifecycle value is unsupported.
-
-## Windows / PC search validation
-
-The generic Windows trial must:
+The rich Markdown exposes searchable meaning including:
 
 ```text
-pinned canonical checkout (core.autocrlf=false)
-→ bundle integrity verify
-→ single-Asset or multi-Asset descriptor verify
-→ structured import
-→ one Markdown search record per Knowledge Unit
-→ MVS index
-→ exact knowledge_id retrieval for every unit
-→ natural-language retrieval for at least one unit per asset_kind
+Knowledge ID
+Parent Asset ID / name / version / asset kind
+Knowledge Kind
+Data Class
+Lifecycle
+Verification
+Summary / Purpose / Responsibility
+Capabilities / Keywords / Semantic Terms
+Domains / Layers / Languages / Runtimes / Tags
+Applicability
+Contract
+Dependencies and composition relations
+Source paths
+Catalog commit
+Asset hash
+Knowledge content
+Matching reusable cases
+Relationships
+Provenance
+```
+
+## Admission gates
+
+The full ModuleCatalog export is rejected if any of the following fail:
+
+```text
+top-level format/schema/repository/commit
+assetCount and actual assets/ directory set
+unique Asset IDs
+per-Asset SHA-256 manifest
+per-Asset bundle hash
+source Asset hash
+required bundle files
+Asset schema sections
+verification.status=verified
+Catalog provenance / commit / asset path
+unique Knowledge IDs
+parent_asset_id integrity
+per-Asset Knowledge Unit / relationship / case counts
+relationship node resolution
+expected Asset count
+expected total Knowledge Unit count
+```
+
+This is fail-closed. Partial admission is not silently accepted.
+
+## Windows / PC isolated trial
+
+Before formal KB promotion, the exact pinned ModuleCatalog commit must pass an isolated trial:
+
+```text
+pinned ModuleCatalog checkout (core.autocrlf=false)
+→ run producer export API outside the catalog tree
+→ verify 80-Asset/full export manifest
+→ import into G-ACE reusable projection
+→ verify Knowledge Unit / metadata / corpus counts
+→ isolated MVS project
+→ BM25 / Vector / KG index
+→ exact MCP retrieval for every Knowledge Unit
+→ natural-language MCP retrieval for at least one unit of every knowledge_kind
 → PASS
 ```
 
-Trial data lives outside the formal KB and reports `FORMAL_KB_UNCHANGED=YES`.
-
-After isolated trial PASS, the formal promotion flow must:
+The trial uses only:
 
 ```text
-rebuild the already-verified base formal KB
-→ import the pinned reusable-asset bundle
-→ combine legacy envelopes without losing structured metadata/corpus
-→ reindex under the proven Windows safety envelope
-→ re-run repository-history regression
-→ re-run existing accepted-skill regression when present
-→ run reusable-asset MCP exact/natural retrieval
-→ PASS
+F:\G-ACE-KB\data\modulecatalog-reusable-trial
 ```
 
-## Current boundary
+and verifies the formal KB JSONL hash is unchanged.
 
-This contract makes the KB **ready to receive** a ModuleCatalog Reusable Asset Bundle, including a bulk multi-Asset export. It does not claim that the current ModuleCatalog 80-Asset migration branch already emits this exact bundle. Producer-side export remains ModuleCatalog work. Once an exact bundle path, pinned commit, and expected Knowledge Unit count are available, the KB side can run isolated Windows trial first and formal promotion second.
+## Formal promotion boundary
+
+Only after the isolated trial passes may the same pinned export be combined into the formal KB.
+Formal promotion must preserve existing repository-history and previously accepted reusable data, reindex under the proven Windows memory-safety envelope, rerun existing retrieval regressions, and then run the reusable-asset MCP gate.
+
+## Current producer boundary
+
+ModuleCatalog PR #4 currently provides Reusable Asset Schema v1 and the deterministic export implementation on branch `feat/reusable-asset-schema-v1-20261001` at commit `f83461b79344e18dda145978fec5cb8f62896ad1`.
+Its recorded producer regression is:
+
+```text
+80 Assets
+720 Knowledge Units
+160 normalized test-case records
+```
+
+That branch is not treated as merged canonical `main`; the KB trial must pin the exact approved producer commit supplied for the run.
+
+## Non-negotiable rule
+
+G-ACE KB is not a Skill-only KB.
+Any reusable Code, Logic, Architecture, Design, Contract, Capability, Test Case, Evidence, Pattern or other verified development asset may be indexed when ModuleCatalog can provide it without fabricating canonical facts.
