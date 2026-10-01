@@ -18,8 +18,9 @@ $Importer = Join-Path $Repo 'scripts\import_verified_modulecatalog_skills.py'
 $Probe = Join-Path $Repo 'tests\mcp_verified_skill_trial_e2e.py'
 $VerifyScript = Join-Path $Repo 'tests\verify-mvs-windows.ps1'
 $BootstrapScript = Join-Path $Repo 'scripts\bootstrap-mvs-windows.ps1'
+$TrialSafetyScript = Join-Path $Repo 'scripts\patch-mvs-windows-trial-safety.ps1'
 
-foreach ($path in @($Repo, $Python, $RuntimePython, $Mvs, $Importer, $Probe, $VerifyScript, $BootstrapScript)) {
+foreach ($path in @($Repo, $Python, $RuntimePython, $Mvs, $Importer, $Probe, $VerifyScript, $BootstrapScript, $TrialSafetyScript)) {
     if (-not (Test-Path $path)) {
         throw "REQUIRED_PATH_MISSING=$path"
     }
@@ -134,6 +135,9 @@ catch {
     & $VerifyScript -Root $Root
 }
 
+Write-Host "`n=== APPLY ISOLATED WINDOWS TRIAL SAFETY GATE ==="
+& $TrialSafetyScript -Root $Root
+
 Write-Host "`n=== IMPORT VERIFIED DEBUGAI SKILLS ==="
 if (Test-Path $TrialRoot) {
     Remove-Item $TrialRoot -Recurse -Force
@@ -162,13 +166,16 @@ if ($corpusCount -ne $ExpectedSkillCount) {
 }
 Write-Host "DEBUGAI_SKILL_DATA=PASS RECORDS=$recordCount CORPUS=$corpusCount"
 
-# This trial has only 13 Markdown documents. Keep the MVS parser path single-worker
-# on Windows so one verification run cannot fan out into many crashing child
-# processes or flood the interactive PowerShell console. The established full KB
-# index remains unchanged; this limit is scoped to this trial process only.
+# This trial has only 13 Markdown documents. Disable the MVS parser ProcessPool
+# entirely for this Windows trial so a native child-process crash cannot fan out
+# access-violation messages or flood the interactive console. Worker limits remain
+# pinned to 1 as a secondary guard. All values are scoped to this process and are
+# restored after the trial; normal formal-KB indexing keeps its existing behavior.
+$previousDisableMultiprocessing = $env:MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING
 $previousWorkers = $env:MCP_VECTOR_SEARCH_WORKERS
 $previousMaxWorkers = $env:MCP_VECTOR_SEARCH_MAX_WORKERS
 $previousFaulthandler = $env:PYTHONFAULTHANDLER
+$env:MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING = '1'
 $env:MCP_VECTOR_SEARCH_WORKERS = '1'
 $env:MCP_VECTOR_SEARCH_MAX_WORKERS = '1'
 $env:PYTHONFAULTHANDLER = '1'
@@ -210,9 +217,10 @@ try {
     if ($status -notmatch "Indexed Files:\s+$ExpectedSkillCount/$ExpectedSkillCount") {
         throw "DEBUGAI_SKILL_INDEX_COUNT_MISMATCH expected=$ExpectedSkillCount STDOUT=$($statusResult.StdoutPath) STDERR=$($statusResult.StderrPath)"
     }
-    Write-Host "DEBUGAI_SKILL_MVS_INDEX=PASS FILES=$ExpectedSkillCount WORKERS=1"
+    Write-Host "DEBUGAI_SKILL_MVS_INDEX=PASS FILES=$ExpectedSkillCount MULTIPROCESSING=DISABLED"
 }
 finally {
+    Restore-EnvironmentValue -Name 'MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING' -Value $previousDisableMultiprocessing
     Restore-EnvironmentValue -Name 'MCP_VECTOR_SEARCH_WORKERS' -Value $previousWorkers
     Restore-EnvironmentValue -Name 'MCP_VECTOR_SEARCH_MAX_WORKERS' -Value $previousMaxWorkers
     Restore-EnvironmentValue -Name 'PYTHONFAULTHANDLER' -Value $previousFaulthandler
