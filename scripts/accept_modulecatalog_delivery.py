@@ -29,7 +29,7 @@ def sha256_file(path: Path) -> str:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON_OBJECT_REQUIRED={path}")
     return value
@@ -114,8 +114,6 @@ def receipt_payload(
     if corpus_count is not None:
         payload["corpusCount"] = corpus_count
     if prior and prior.get("status") == "ACTIVE":
-        # Idempotent re-receipt of the same already-active delivery must not
-        # downgrade operational authority from ACTIVE back to ACCEPTED.
         for key, value in prior.items():
             if key not in {"acceptedAtUtc"}:
                 payload[key] = value
