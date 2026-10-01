@@ -72,14 +72,16 @@ function Invoke-MvsStreaming {
         }
 
         $process.WaitForExit()
+        $process.Refresh()
         Write-NewLogLines -Path $stdoutPath -Offset ([ref]$stdoutOffset) -Collector $collector
         Write-NewLogLines -Path $stderrPath -Offset ([ref]$stderrOffset) -Collector $collector
 
+        $exitCode = [int]$process.ExitCode
         $elapsed = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 1)
-        Write-Host "COMMAND_EXIT=$($process.ExitCode) ELAPSED_SEC=$elapsed ARGS=$($Arguments -join ' ')"
+        Write-Host "COMMAND_EXIT=$exitCode ELAPSED_SEC=$elapsed ARGS=$($Arguments -join ' ')"
 
         [pscustomobject]@{
-            ExitCode = $process.ExitCode
+            ExitCode = $exitCode
             Output   = ($collector -join [Environment]::NewLine)
         }
     }
@@ -91,12 +93,40 @@ function Invoke-MvsStreaming {
     }
 }
 
+$originalRespectGitignore = $null
+$restoreRespectGitignore = $false
+
 Push-Location $Repo
 try {
+    Write-Host '=== REGRESSION PREFLIGHT ==='
+    $trackedDocs = @(& git -C $Repo ls-files -- 'README.md' 'docs/*.md')
+    if ($LASTEXITCODE -ne 0) { throw "GIT_LS_FILES_FAILED=$LASTEXITCODE" }
+    Write-Host "TRACKED_KB_DOCS=$($trackedDocs.Count)"
+    $trackedDocs | ForEach-Object { Write-Host "TRACKED_KB_DOC=$_" }
+    if ($trackedDocs.Count -eq 0) { throw 'TRACKED_KB_DOCS_MISSING' }
+
+    $configGet = Invoke-MvsStreaming -Arguments @('config','get','respect_gitignore') -TimeoutSeconds 60
+    if ($configGet.ExitCode -ne 0) { throw "CONFIG_GET_RESPECT_GITIGNORE_FAILED=$($configGet.ExitCode)" }
+    if ($configGet.Output -match '(?i)respect_gitignore\s*:\s*(True|False)') {
+        $originalRespectGitignore = $Matches[1].ToLowerInvariant()
+    }
+    else {
+        throw 'CONFIG_GET_RESPECT_GITIGNORE_UNPARSEABLE'
+    }
+
+    # Regression must validate the tracked KB corpus independently of a local,
+    # untracked .gitignore. Restore the user's project setting in finally.
+    if ($originalRespectGitignore -ne 'false') {
+        $configSet = Invoke-MvsStreaming -Arguments @('config','set','respect_gitignore','false') -TimeoutSeconds 60
+        if ($configSet.ExitCode -ne 0) { throw "CONFIG_SET_RESPECT_GITIGNORE_FAILED=$($configSet.ExitCode)" }
+        $restoreRespectGitignore = $true
+    }
+
     Write-Host '=== INDEX REGRESSION ==='
-    $indexResult = Invoke-MvsStreaming -Arguments @('index') -TimeoutSeconds 600
+    $indexResult = Invoke-MvsStreaming -Arguments @('index','--force') -TimeoutSeconds 600
     if ($indexResult.ExitCode -ne 0) { throw "INDEX_FAILED=$($indexResult.ExitCode)" }
     if ($indexResult.Output -notmatch 'Reindex complete:') { throw 'INDEX_COMPLETION_MARKER_MISSING' }
+    if ($indexResult.Output -match 'Reindex complete:\s*0 files,\s*0 chunks') { throw 'INDEX_ZERO_CORPUS' }
     if ($indexResult.Output -match 'CodeEntity node delete failed') { throw 'KNOWLEDGE_GRAPH_WINDOWS_PATH_WARNING_PRESENT' }
     if ($indexResult.Output -notmatch 'Knowledge graph built successfully') { throw 'KNOWLEDGE_GRAPH_COMPLETION_MARKER_MISSING' }
 
@@ -121,5 +151,19 @@ try {
     Write-Host 'MVS_REAL_REGRESSION=PASS'
 }
 finally {
+    if ($restoreRespectGitignore -and $null -ne $originalRespectGitignore) {
+        try {
+            $restoreResult = Invoke-MvsStreaming -Arguments @('config','set','respect_gitignore',$originalRespectGitignore) -TimeoutSeconds 60
+            if ($restoreResult.ExitCode -ne 0) {
+                Write-Warning "RESPECT_GITIGNORE_RESTORE_FAILED=$($restoreResult.ExitCode)"
+            }
+            else {
+                Write-Host "RESPECT_GITIGNORE_RESTORED=$originalRespectGitignore"
+            }
+        }
+        catch {
+            Write-Warning "RESPECT_GITIGNORE_RESTORE_EXCEPTION=$($_.Exception.Message)"
+        }
+    }
     Pop-Location
 }
