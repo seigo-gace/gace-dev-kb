@@ -391,7 +391,7 @@ Master Windows execution at `4621ddfe9a255e0624653220f23b1d210966111b` produced:
 - `GACE_MCP_CLIENT_E2E=PASS`;
 - `GACE_MCP_WINDOWS_E2E=PASS`.
 
-Client-side output reported server name/version as `unknown`; initialization itself succeeded. That display detail remains unresolved evidence rather than being treated as a failed protocol gate.
+Client-side output reported server name/version as `unknown`; initialization itself succeeded. That display detail was later closed by reading MCP SDK 2 `server_info` correctly.
 
 ### Current decision
 
@@ -401,7 +401,7 @@ The first repository can now move from committed Git evidence through determinis
 
 ## 2026-10-01 — cross-repository knowledge reuse E2E source added
 
-**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS VALIDATION PENDING.
+**Status:** superseded by the validated Master Windows cross-repository E2E below.
 
 ### Implemented/new design
 
@@ -423,8 +423,110 @@ Cross-repository reuse is tested without creating a new persistent repository or
 - `a017c934fcf32db617853995416ff830c181ae36` — deterministic multi-repository record combiner;
 - `521aef8c31e5ad8e7ab2e447e8df594f214b66b4` — combiner tests;
 - `c5fa4be11c8145bcab0c261572fe26630a329cdd` — real MCP cross-repository retrieval client;
-- `e46e654c5ecd26f6f94967365fe5574e96d2ad28` — one-command Windows cross-repository reuse E2E.
+- `e46e654c5ecd26f6f94967365fe5574e96d2ad28` — one-command Windows cross-repository reuse E2E;
+- `633e2dcf0fb173123d75a4408b2db77fc9a63a93` — remove snippet-dependent repository assertion;
+- `5d1835d944df047cd8615f1d66c869872781fa91` — verify repository identities before MCP retrieval;
+- `de7f0888335978b6570ae78aadcd90237e1dc257` — harden combined-record repository identity checks;
+- `d188c97ff9254922be9dfb3aee1b6119e13cf650` — use a real stderr file for Windows MCP subprocess handling.
 
-### Validation boundary
+---
 
-Do not report cross-repository reuse as validated until the Master Windows run produces the explicit final marker `GACE_CROSS_REPO_REUSE_E2E=PASS` and the two repository-specific MCP retrieval checks pass.
+## 2026-10-01 — cross-repository knowledge reuse E2E validated
+
+**Status:** PASS for first-version cross-repository reuse.
+
+### Real Windows evidence
+
+The validated run used public `seigo-gace/Astera` as the second repository and produced:
+
+- deterministic combiner tests: 3/3 PASS;
+- 70 current-repository records + 20 Astera records = 90 combined records;
+- 90/90 indexed files;
+- 633 chunks / 633 embeddings;
+- 540 knowledge-graph entities / 539 relationships;
+- real MCP retrieval from `seigo-gace/gace-dev-kb` commit `a017c934...`: PASS;
+- real MCP retrieval from `seigo-gace/Astera` commit `5ef89073...`: PASS;
+- `GACE_CROSS_REPO_MCP_REUSE=PASS CHECKS=2 REPOSITORIES=2`;
+- `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2`;
+- `CROSS_REPO_TEMP_CLEANUP=PASS`.
+
+### Decision
+
+The first-version repository → knowledge → index → MCP → cross-repository reuse boundary is closed. Further work in this repository must be measured quality hardening or an explicitly approved new scope.
+
+---
+
+## 2026-10-01 — full-history retention and Windows search-quality hardening validated
+
+**Status:** PASS for durable full-history retention, persisted BM25 evidence, warning regression protection, and MCP retrieval.
+
+### Problem found
+
+The initial Windows export/index wrapper bounded the durable export to the newest records. As the repository grew, older but still-valid knowledge such as `74e8171...` could fall outside the generated corpus even though Git still contained it. During the same hardening phase, real runtime evidence also showed:
+
+- atomic rebuild could leave BM25 bound to a temporary Lance path;
+- the installed embedding library emitted the `get_sentence_embedding_dimension` deprecation warning;
+- doc-only Markdown knowledge search attempted code-entity KG enhancement and emitted `Could not find entity matching ...` warnings;
+- MCP SDK 2 server metadata was displayed as `unknown` by the client despite successful initialization;
+- CLI rendering behavior was not a reliable authority for persisted BM25 retention.
+
+### Implemented/new design
+
+- durable adapter/export defaults to all commits reachable from the requested revision; positive `--max-count` is explicit bounded behavior only;
+- generated indexing verifies historical commit retention before rendering;
+- Windows runtime compatibility reopens the final BM25/vector backend after atomic rebuild finalization;
+- embedding-dimension compatibility prefers the current API;
+- code-entity KG enhancement is skipped for doc-only knowledge corpora with zero code entities;
+- MCP client reads SDK 2 `server_info` correctly;
+- `scripts/index-knowledge-windows.ps1` fails closed if the prior BM25 fallback, embedding deprecation, or doc-only KG warning classes reappear;
+- persisted BM25 retention is validated directly below CLI rendering by `tests/bm25_knowledge_retention_probe.py`, which loads `bm25_index.pkl`, queries a full commit ID, resolves the returned chunk through LanceDB, and verifies the actual chunk content.
+
+### Applying implementation/fix commits
+
+- `8a0fce9` — harden Windows atomic rebuild and embedding API compatibility;
+- `62ca6c5` — verify atomic BM25 and embedding API compatibility;
+- `cc99410` — read MCP SDK 2 server metadata;
+- `f60a23e` — fail closed on BM25 and embedding warning regressions;
+- `e5ffa101` / `0dcb553b` / `90e69f56` — full-history retention semantics and export behavior;
+- `c94d745b` / `cffaeeab` — doc-only KG search compatibility and verification;
+- `cee23eb8` / `c0c8ad32` — deterministic retention/search hardening;
+- `1177ffcc8c86d605429744d58166eeb4f3b33609` — direct BM25 knowledge-retention probe;
+- `e76bcb32bb6244af57d9b2c0e9af3eed515454c5` — use direct BM25 retention validation below CLI rendering.
+
+### Final Master Windows evidence
+
+Execution at `e76bcb32bb6244af57d9b2c0e9af3eed515454c5` produced:
+
+- `MVS_WINDOWS_MP_CONTEXT=spawn`;
+- `MVS_MCP_SDK2_COMPAT=PASS`;
+- `MVS_EMBEDDING_DIMENSION_API=PASS`;
+- `MVS_ATOMIC_BM25_BACKEND_REOPEN=PASS`;
+- `MVS_DOC_ONLY_KG_ENHANCEMENT=PASS`;
+- `MVS_WINDOWS_COMPAT_VERIFY=PASS`;
+- `GACE_KNOWLEDGE_WINDOWS_EXPORT=PASS RECORDS=89 MODE=FULL_HISTORY`;
+- historical retention PASS for `74e8171...` and `4912a442...`;
+- generated corpus: 89 records;
+- full reindex: 89 files / 625 chunks / 625 embeddings;
+- generated knowledge graph: 534 entities / 533 relationships;
+- `MVS_BM25_INDEX=PASS`;
+- direct BM25 probe `WINDOWS_KUZU_FIX`: 1 result, expected `74e8171...` record;
+- direct BM25 probe `GACE_ADAPTER`: 1 result, expected `4912a442...` record;
+- `MVS_BM25_WARNING_REGRESSION=PASS`;
+- `MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS`;
+- `MVS_DOC_ONLY_KG_WARNING_REGRESSION=PASS`;
+- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=89`;
+- `MCP_INITIALIZE=PASS SERVER=mcp-vector-search VERSION=0.4.0`;
+- `MCP_SERVER_INFO=PASS`;
+- `MCP_LIST_TOOLS=PASS COUNT=28`;
+- `MCP_PROJECT_STATUS=PASS`;
+- `MCP_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25`;
+- `MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25`;
+- `MCP_DOC_ONLY_KG_WARNING_REGRESSION=PASS`;
+- `GACE_MCP_CLIENT_E2E=PASS`;
+- `GACE_MCP_WINDOWS_E2E=PASS`.
+
+### Current decision
+
+The measured Windows quality-hardening boundary is closed. The repository now retains full reachable Git history by default, proves persisted BM25 evidence directly, and validates real MCP retrieval independently of CLI presentation behavior. Local untracked `.gitignore` and pre-existing `scripts/__pycache__/` remain intentionally untouched.
+
+Knowledge-data processing/admission from TGserver is a separate development scope and is not added here.
