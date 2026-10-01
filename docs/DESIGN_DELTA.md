@@ -286,7 +286,7 @@ The repository → knowledge-record stage is now validated. The next runtime gat
 
 ## 2026-10-01 — generated knowledge corpus and OSS indexing pipeline source added
 
-**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS CORPUS/INDEX/SEARCH VALIDATION PENDING.
+**Status:** superseded by the real Windows generated-index validation below.
 
 ### Implemented/new design
 
@@ -299,19 +299,11 @@ F:\G-ACE-KB\data\
 ├─ knowledge-records\
 │  └─ gace-dev-kb.jsonl
 └─ knowledge-search\
-   ├─ records\                 # one generated Markdown document per record
-   └─ .mcp-vector-search\      # dedicated generated search config/index
+   ├─ records\
+   └─ .mcp-vector-search\
 ```
 
-The pipeline:
-
-1. reruns the deterministic Git knowledge export;
-2. renders one Markdown file per record;
-3. initializes or reuses a dedicated `mcp-vector-search` project outside Git source;
-4. force-indexes the generated corpus;
-5. verifies indexed-file count equals exported record count;
-6. searches for the known Kuzu Windows compatibility record (`74e8171...`);
-7. searches for the known G-ACE adapter record (`4912a442...`).
+The pipeline reruns the deterministic Git knowledge export, renders one Markdown file per record, initializes/reuses a dedicated `mcp-vector-search` project outside Git source, force-indexes the generated corpus, verifies exact indexed-file count, and searches for known Kuzu and adapter records.
 
 ### Applying implementation commits
 
@@ -320,6 +312,119 @@ The pipeline:
 - `1172ae12eccb1b159588940b621c93ffd5fd5b4d` — renderer contract tests;
 - `3cdf008054f333e0fa56e82b0b6442457f9f14af` — prevent future adapter-test bytecode cache creation.
 
+---
+
+## 2026-10-01 — generated knowledge index and retrieval validated
+
+**Status:** PASS for repository records → rendered corpus → OSS index → direct retrieval.
+
+### Runtime compatibility added during validation
+
+Real Windows indexing exposed an upstream multiprocessing defect: `mcp-vector-search` 4.1.14 selected `fork` for every non-macOS platform, while Windows requires `spawn`.
+
+Repository-managed compatibility was extended so Windows returns `spawn`, the verifier executes the real context probe, and the index pipeline self-repairs/reverifies before indexing.
+
+### Applying compatibility commits
+
+- `68a2d6c...` — use `spawn` multiprocessing context on Windows;
+- `e566e1c...` — verify Windows multiprocessing compatibility;
+- `511ec3672b2253dec8e224b10fb9b8067ddd7c19` — self-heal Windows MVS compatibility before knowledge indexing.
+
+### Real Windows evidence
+
+The latest validated run produced:
+
+- `MVS_WINDOWS_MP_CONTEXT=spawn`;
+- `MVS_WINDOWS_COMPAT_VERIFY=PASS`;
+- `GACE_KNOWLEDGE_EXPORT=PASS RECORDS=47`;
+- `GACE_KNOWLEDGE_CORPUS=PASS RECORDS=47`;
+- full generated-corpus reindex: 47 files / 331 chunks / 331 embeddings;
+- generated knowledge graph: 282 entities / 281 relationships;
+- status: 47/47 indexed;
+- Kuzu compatibility knowledge `74e8171...` retrieved first;
+- adapter knowledge `4912a442...` retrieved first;
+- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=47`.
+
+### Retained warnings
+
+- BM25 build still emits a non-fatal Lance missing-file warning and hybrid search falls back to vector-only;
+- entity-matching warnings still appear during semantic search;
+- the embedding library still emits a deprecation `FutureWarning`.
+
+These warnings remain follow-up evidence and are not hidden by the PASS result.
+
+---
+
+## 2026-10-01 — MCP SDK 2.x compatibility and real MCP client E2E validated
+
+**Status:** PASS for generated knowledge retrieval through the real MCP stdio protocol.
+
+### Defect found
+
+`mcp-vector-search` 4.1.14 declares `mcp>=1.12.4` without an upper bound and the installed runtime resolved MCP SDK 2.2.0. The upstream server still used the older decorator registration API (`server.list_tools()` / `server.call_tool()`), causing the stdio child process to close during client initialization.
+
+### Implemented compatibility adaptation
+
+The repository-managed bootstrap now adapts the installed pinned runtime to the MCP SDK 2.x constructor-handler interface and uses the current server initialization-options path. The verifier checks the patched source and performs real server creation. PowerShell probe handling was also corrected so informational stderr does not become a false `NativeCommandError` under `$ErrorActionPreference='Stop'`.
+
+### Applying implementation/fix commits
+
+- `04a05afae8c74bab7985af1db066026ea20e26c1` — adapt MVS MCP server to MCP SDK 2.x;
+- `ba737f815a522c66f18d2351cc113dd18bc7a400` — verify MCP SDK 2 server compatibility;
+- `82b85794c85b67c7a09daf3d25d980e41532a095` — self-heal MCP runtime compatibility before E2E;
+- `f101873dd20b5427dd6c64abb75d56aa2767dc5b` — surface MCP server stderr on stdio failure;
+- `9ec32b74ab90a1433b3cf940b327012ee2fe2328` — tolerate informational MCP probe stderr in bootstrap;
+- `4621ddfe9a255e0624653220f23b1d210966111b` — apply the same correct probe behavior in verifier.
+
+### Real Windows evidence
+
+Master Windows execution at `4621ddfe9a255e0624653220f23b1d210966111b` produced:
+
+- `MVS_WINDOWS_MP_CONTEXT=spawn`;
+- `MVS_MCP_SDK2_COMPAT=PASS`;
+- `MVS_WINDOWS_COMPAT_VERIFY=PASS`;
+- `MCP_INITIALIZE=PASS`;
+- `MCP_LIST_TOOLS=PASS COUNT=28`;
+- `MCP_PROJECT_STATUS=PASS`;
+- `MCP_SEARCH_KUZU=PASS COMMIT=74e8171`;
+- `MCP_SEARCH_ADAPTER=PASS COMMIT=4912a442`;
+- `GACE_MCP_CLIENT_E2E=PASS`;
+- `GACE_MCP_WINDOWS_E2E=PASS`.
+
+Client-side output reported server name/version as `unknown`; initialization itself succeeded. That display detail remains unresolved evidence rather than being treated as a failed protocol gate.
+
+### Current decision
+
+The first repository can now move from committed Git evidence through deterministic record projection, generated indexing, and real MCP client retrieval. The remaining first-version proof is cross-repository reuse.
+
+---
+
+## 2026-10-01 — cross-repository knowledge reuse E2E source added
+
+**Status:** SOURCE IMPLEMENTED; MASTER WINDOWS VALIDATION PENDING.
+
+### Implemented/new design
+
+Cross-repository reuse is tested without creating a new persistent repository or production resource. The Windows E2E uses a temporary OS workspace:
+
+1. verify/repair the existing pinned MVS/MCP runtime;
+2. shallow-clone public `seigo-gace/Astera` into the temporary workspace;
+3. export deterministic records from current `gace-dev-kb` and Astera;
+4. combine them without changing the initial record contract or reconciling missing/conflicting evidence;
+5. render and index a temporary combined corpus;
+6. verify exact indexed-record count;
+7. launch the real MCP stdio server/client path;
+8. retrieve a known `gace-dev-kb` record and Astera commit `5ef89073...`;
+9. require two distinct repository identities;
+10. remove the temporary workspace after success.
+
+### Applying implementation commits
+
+- `a017c934fcf32db617853995416ff830c181ae36` — deterministic multi-repository record combiner;
+- `521aef8c31e5ad8e7ab2e447e8df594f214b66b4` — combiner tests;
+- `c5fa4be11c8145bcab0c261572fe26630a329cdd` — real MCP cross-repository retrieval client;
+- `e46e654c5ecd26f6f94967365fe5574e96d2ad28` — one-command Windows cross-repository reuse E2E.
+
 ### Validation boundary
 
-Source existence is not runtime PASS. The renderer tests, real generated corpus, dedicated MVS index, exact indexed-record count, and the two semantic retrieval gates must pass on the Master Windows environment before this pipeline is declared validated.
+Do not report cross-repository reuse as validated until the Master Windows run produces the explicit final marker `GACE_CROSS_REPO_REUSE_E2E=PASS` and the two repository-specific MCP retrieval checks pass.
