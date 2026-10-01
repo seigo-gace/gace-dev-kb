@@ -76,6 +76,8 @@ function Invoke-MvsCapture {
 
         [pscustomobject]@{
             ExitCode = $exitCode
+            Stdout   = $stdout
+            Stderr   = $stderr
             Output   = $output
         }
     }
@@ -104,6 +106,37 @@ function Assert-NoClosedWarningRegression {
     }
     if ($Output -match 'Could not find entity matching') {
         throw "DOC_ONLY_KG_ENTITY_WARNING_PRESENT STAGE=$Stage"
+    }
+}
+
+function Assert-CliJsonContainsCommit {
+    param(
+        [pscustomobject]$Result,
+        [string]$Commit,
+        [string]$Label
+    )
+
+    if ($Result.ExitCode -ne 0) {
+        throw "${Label}_CLI_EXIT=$($Result.ExitCode)"
+    }
+    if (-not $Result.Stdout.Trim()) {
+        throw "${Label}_CLI_JSON_EMPTY"
+    }
+
+    try {
+        $rows = @($Result.Stdout | ConvertFrom-Json)
+    }
+    catch {
+        throw "${Label}_CLI_JSON_INVALID=$($_.Exception.Message)"
+    }
+
+    if ($rows.Count -lt 1) {
+        throw "${Label}_CLI_NO_RESULTS"
+    }
+
+    $jsonText = $Result.Stdout
+    if (-not $jsonText.Contains($Commit)) {
+        throw "${Label}_CLI_COMMIT_MISSING=$Commit"
     }
 }
 
@@ -175,39 +208,39 @@ if ($statusResult.Output -notmatch "Indexed Files:\s+$recordCount/$recordCount")
     throw "KNOWLEDGE_STATUS_COUNT_MISMATCH expected=$recordCount"
 }
 
-# Keep the CLI retrieval contract aligned with the MCP E2E. BM25 relevance
-# scores are not cosine similarities; leaving the generic adaptive/default
-# similarity threshold in place can filter valid lexical hits before display.
+# This gate verifies durable identity retrieval, not semantic ranking quality.
+# Query the unique commit IDs directly, request machine-readable JSON, and keep
+# the semantic phrase retrieval check in the MCP E2E where it is already proven.
 $deterministicSearchOptions = @(
-    '--limit','50',
+    '--project-root',$SearchRoot,
+    '--limit','100',
     '--threshold','0.0',
     '--search-mode','bm25',
     '--no-expand',
     '--no-rerank',
     '--no-mmr',
     '--quality-weight','0',
-    '--no-daemon'
+    '--no-daemon',
+    '--json'
 )
 
-Write-Host '=== SEARCH WINDOWS KUZU FIX ==='
+Write-Host '=== CLI BM25 IDENTITY SEARCH: WINDOWS KUZU FIX ==='
 $kuzuResult = Invoke-MvsCapture `
-    -Arguments (@('search','normalize Windows paths for Kuzu graph cleanup') + $deterministicSearchOptions) `
+    -Arguments (@('search','74e8171') + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
-if ($kuzuResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_KUZU_FAILED=$($kuzuResult.ExitCode)" }
 Assert-NoClosedWarningRegression -Output $kuzuResult.Output -Stage 'search-kuzu'
-if ($kuzuResult.Output -notmatch '74e8171') { throw 'KNOWLEDGE_SEARCH_KUZU_RECORD_MISSING' }
-Write-Host 'KNOWLEDGE_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25'
+Assert-CliJsonContainsCommit -Result $kuzuResult -Commit $KnownKuzuCommit -Label 'KNOWLEDGE_SEARCH_KUZU'
+Write-Host 'KNOWLEDGE_SEARCH_KUZU=PASS COMMIT=74e8171 MODE=bm25 QUERY=commit-id'
 
-Write-Host '=== SEARCH G-ACE ADAPTER ==='
+Write-Host '=== CLI BM25 IDENTITY SEARCH: G-ACE ADAPTER ==='
 $adapterResult = Invoke-MvsCapture `
-    -Arguments (@('search','deterministic G-ACE repository knowledge adapter') + $deterministicSearchOptions) `
+    -Arguments (@('search','4912a442') + $deterministicSearchOptions) `
     -WorkingDirectory $SearchRoot `
     -TimeoutSeconds 180
-if ($adapterResult.ExitCode -ne 0) { throw "KNOWLEDGE_SEARCH_ADAPTER_FAILED=$($adapterResult.ExitCode)" }
 Assert-NoClosedWarningRegression -Output $adapterResult.Output -Stage 'search-adapter'
-if ($adapterResult.Output -notmatch '4912a442') { throw 'KNOWLEDGE_SEARCH_ADAPTER_RECORD_MISSING' }
-Write-Host 'KNOWLEDGE_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25'
+Assert-CliJsonContainsCommit -Result $adapterResult -Commit $KnownAdapterCommit -Label 'KNOWLEDGE_SEARCH_ADAPTER'
+Write-Host 'KNOWLEDGE_SEARCH_ADAPTER=PASS COMMIT=4912a442 MODE=bm25 QUERY=commit-id'
 
 Write-Host 'MVS_BM25_WARNING_REGRESSION=PASS'
 Write-Host 'MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS'
