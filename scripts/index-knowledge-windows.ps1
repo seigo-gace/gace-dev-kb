@@ -175,8 +175,12 @@ if ($statusResult.Output -notmatch "Indexed Files:\s+$recordCount/$recordCount")
     throw "KNOWLEDGE_STATUS_COUNT_MISMATCH expected=$recordCount"
 }
 
+# Keep the CLI retrieval contract aligned with the MCP E2E. BM25 relevance
+# scores are not cosine similarities; leaving the generic adaptive/default
+# similarity threshold in place can filter valid lexical hits before display.
 $deterministicSearchOptions = @(
     '--limit','50',
+    '--threshold','0.0',
     '--search-mode','bm25',
     '--no-expand',
     '--no-rerank',
