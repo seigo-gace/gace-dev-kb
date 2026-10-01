@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-REQUIRED_BUNDLE_FILES=("asset.json","knowledge-units.jsonl","manifest.json")
+REQUIRED_BUNDLE_FILES=("knowledge-units.jsonl","manifest.json")
 REQUIRED_UNIT_KEYS=("schema_version","knowledge_id","parent_asset_id","asset_kind","name","summary","verification","provenance","data_class")
 ALLOWED_DATA_CLASSES={"canonical","derived"}
 ALLOWED_LIFECYCLE={"experimental","verified","active","deprecated","superseded","retired"}
@@ -44,6 +44,9 @@ def verify_manifest(bundle:Path,manifest:dict[str,Any])->None:
         if str(item.get('sha256') or '').lower()!=sha256_file(path): raise RuntimeError(f'BUNDLE_MANIFEST_SHA256_MISMATCH={rel}')
     for rel in REQUIRED_BUNDLE_FILES:
         if rel!='manifest.json' and rel not in listed: raise RuntimeError(f'BUNDLE_REQUIRED_FILE_NOT_MANIFESTED={rel}')
+    descriptors=[rel for rel in ('asset.json','assets.jsonl') if (bundle/rel).is_file()]
+    if len(descriptors)!=1: raise RuntimeError('BUNDLE_ASSET_DESCRIPTOR_COUNT_INVALID')
+    if descriptors[0] not in listed: raise RuntimeError(f'BUNDLE_REQUIRED_FILE_NOT_MANIFESTED={descriptors[0]}')
 
 def read_jsonl(path:Path)->list[dict[str,Any]]:
     rows=[]
@@ -54,6 +57,26 @@ def read_jsonl(path:Path)->list[dict[str,Any]]:
         rows.append(item)
     if not rows: raise RuntimeError('KNOWLEDGE_UNITS_EMPTY')
     return rows
+
+def load_assets(bundle:Path)->dict[str,dict[str,Any]]:
+    single=bundle/'asset.json'; multi=bundle/'assets.jsonl'
+    if single.is_file() and multi.is_file(): raise RuntimeError('BUNDLE_ASSET_DESCRIPTOR_AMBIGUOUS')
+    rows=[]
+    if single.is_file():
+        item=json.loads(single.read_text(encoding='utf-8'))
+        if not isinstance(item,dict): raise RuntimeError('ASSET_DESCRIPTOR_NOT_OBJECT')
+        rows=[item]
+    elif multi.is_file():
+        rows=read_jsonl(multi)
+    else: raise RuntimeError('BUNDLE_ASSET_DESCRIPTOR_MISSING')
+    assets={}
+    for item in rows:
+        if int(item.get('schema_version',0))!=1: raise RuntimeError(f"ASSET_SCHEMA_UNSUPPORTED={item.get('schema_version')}")
+        asset_id=str(item.get('asset_id') or '')
+        if not asset_id: raise RuntimeError('ASSET_ID_MISSING')
+        if asset_id in assets: raise RuntimeError(f'ASSET_ID_DUPLICATE={asset_id}')
+        assets[asset_id]=item
+    return assets
 
 def validate_unit(unit:dict[str,Any])->None:
     missing=[k for k in REQUIRED_UNIT_KEYS if k not in unit]
@@ -116,18 +139,16 @@ def build(catalog_root:Path,bundle_path:str,output_root:Path,expected_record_cou
     for rel in REQUIRED_BUNDLE_FILES:
         if not (bundle/rel).is_file(): raise RuntimeError(f'BUNDLE_REQUIRED_FILE_MISSING={rel}')
     verify_manifest(bundle,json.loads((bundle/'manifest.json').read_text(encoding='utf-8')))
-    asset=json.loads((bundle/'asset.json').read_text(encoding='utf-8'))
-    if int(asset.get('schema_version',0))!=1: raise RuntimeError(f"ASSET_SCHEMA_UNSUPPORTED={asset.get('schema_version')}")
-    asset_id=str(asset.get('asset_id') or '')
-    if not asset_id: raise RuntimeError('ASSET_ID_MISSING')
+    assets=load_assets(bundle)
     units=read_jsonl(bundle/'knowledge-units.jsonl'); seen=set(); head=git(catalog_root,'rev-parse','HEAD')
     for unit in units:
         validate_unit(unit); kid=str(unit['knowledge_id'])
         if kid in seen: raise RuntimeError(f'KNOWLEDGE_UNIT_ID_DUPLICATE={kid}')
         seen.add(kid)
-        if str(unit['parent_asset_id'])!=asset_id: raise RuntimeError(f'KNOWLEDGE_UNIT_PARENT_MISMATCH id={kid}')
+        parent=str(unit['parent_asset_id'])
+        if parent not in assets: raise RuntimeError(f'KNOWLEDGE_UNIT_PARENT_UNKNOWN id={kid} parent={parent}')
         c=unit['provenance']['catalog']
-        if str(c['asset_id'])!=asset_id: raise RuntimeError(f'KNOWLEDGE_UNIT_CATALOG_ASSET_MISMATCH id={kid}')
+        if str(c['asset_id'])!=parent: raise RuntimeError(f'KNOWLEDGE_UNIT_CATALOG_ASSET_MISMATCH id={kid}')
         if str(c['commit'])!=head: raise RuntimeError(f'KNOWLEDGE_UNIT_CATALOG_COMMIT_MISMATCH id={kid} expected={head} actual={c["commit"]}')
     if expected_record_count is not None and len(units)!=expected_record_count: raise RuntimeError(f'KNOWLEDGE_UNIT_COUNT_MISMATCH expected={expected_record_count} actual={len(units)}')
     output_root=output_root.resolve(); corpus=output_root/'records'; corpus.mkdir(parents=True,exist_ok=True)
@@ -138,11 +159,11 @@ def build(catalog_root:Path,bundle_path:str,output_root:Path,expected_record_cou
         ident=re.sub(r'[^0-9A-Za-z._-]+','-',str(unit['knowledge_id'])).strip('-') or 'knowledge'
         (corpus/f'{i:04d}-{ident[:120]}.md').write_text(render(unit,rec),encoding='utf-8',newline='\n')
     write_jsonl(output_root/'knowledge-records.jsonl',[asdict(x) for x in records]); write_jsonl(output_root/'knowledge-metadata.jsonl',metadata)
-    return records,metadata,corpus
+    return records,metadata,corpus,len(assets)
 
 def main()->int:
     p=argparse.ArgumentParser(); p.add_argument('--catalog-root',type=Path,required=True); p.add_argument('--bundle-path',required=True); p.add_argument('--output-root',type=Path,required=True); p.add_argument('--expected-record-count',type=int); a=p.parse_args()
-    records,metadata,corpus=build(a.catalog_root,a.bundle_path,a.output_root,a.expected_record_count)
-    print(f"GACE_REUSABLE_ASSET_IMPORT=PASS RECORDS={len(records)} KINDS={','.join(sorted({str(x['asset_kind']) for x in metadata}))} CORPUS={corpus}")
+    records,metadata,corpus,asset_count=build(a.catalog_root,a.bundle_path,a.output_root,a.expected_record_count)
+    print(f"GACE_REUSABLE_ASSET_IMPORT=PASS ASSETS={asset_count} RECORDS={len(records)} KINDS={','.join(sorted({str(x['asset_kind']) for x in metadata}))} CORPUS={corpus}")
     return 0
 if __name__=='__main__': raise SystemExit(main())
