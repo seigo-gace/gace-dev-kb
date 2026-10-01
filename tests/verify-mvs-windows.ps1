@@ -52,13 +52,24 @@ if ($mcpText -notmatch 'server\.create_initialization_options\(\)') {
     throw 'MCP_SDK2_INIT_OPTIONS_PATCH_MISSING'
 }
 
-$mcpProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ($mcpProbe -join [Environment]::NewLine)
-    throw "MCP_SDK2_SERVER_CREATE_PROBE_FAILED=$LASTEXITCODE"
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $mcpProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
+    $mcpProbeExit = $LASTEXITCODE
 }
-$mcpServerType = ([string]$mcpProbe[-1]).Trim()
-if ($mcpServerType -ne 'Server') { throw "MCP_SERVER_TYPE_UNEXPECTED=$mcpServerType" }
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($mcpProbeExit -ne 0) {
+    Write-Host ($mcpProbe -join [Environment]::NewLine)
+    throw "MCP_SDK2_SERVER_CREATE_PROBE_FAILED=$mcpProbeExit"
+}
+$mcpServerType = @($mcpProbe | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -eq 'Server' } | Select-Object -Last 1)
+if ($mcpServerType.Count -ne 1 -or $mcpServerType[0] -ne 'Server') {
+    Write-Host ($mcpProbe -join [Environment]::NewLine)
+    throw 'MCP_SERVER_TYPE_UNEXPECTED'
+}
 
 & $Mvs --help *> $null
 if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
