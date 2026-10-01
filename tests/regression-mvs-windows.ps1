@@ -9,38 +9,56 @@ $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
 if (-not (Test-Path $Repo)) { throw "REPO_NOT_FOUND=$Repo" }
 if (-not (Test-Path $Mvs)) { throw "MVS_NOT_FOUND=$Mvs" }
 
+function Invoke-MvsCapture {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $lines = & $Mvs @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = ($lines | Out-String)
+    }
+}
+
 Push-Location $Repo
 try {
     Write-Host '=== INDEX REGRESSION ==='
-    $indexOutput = (& $Mvs index 2>&1 | Out-String)
-    $indexExit = $LASTEXITCODE
-    Write-Host $indexOutput
-    if ($indexExit -ne 0) { throw "INDEX_FAILED=$indexExit" }
-    if ($indexOutput -notmatch 'Reindex complete:') { throw 'INDEX_COMPLETION_MARKER_MISSING' }
-    if ($indexOutput -match 'CodeEntity node delete failed') { throw 'KNOWLEDGE_GRAPH_WINDOWS_PATH_WARNING_PRESENT' }
-    if ($indexOutput -notmatch 'Knowledge graph built successfully') { throw 'KNOWLEDGE_GRAPH_COMPLETION_MARKER_MISSING' }
+    $indexResult = Invoke-MvsCapture 'index'
+    Write-Host $indexResult.Output
+    if ($indexResult.ExitCode -ne 0) { throw "INDEX_FAILED=$($indexResult.ExitCode)" }
+    if ($indexResult.Output -notmatch 'Reindex complete:') { throw 'INDEX_COMPLETION_MARKER_MISSING' }
+    if ($indexResult.Output -match 'CodeEntity node delete failed') { throw 'KNOWLEDGE_GRAPH_WINDOWS_PATH_WARNING_PRESENT' }
+    if ($indexResult.Output -notmatch 'Knowledge graph built successfully') { throw 'KNOWLEDGE_GRAPH_COMPLETION_MARKER_MISSING' }
 
     Write-Host '=== STATUS ==='
-    $statusOutput = (& $Mvs status 2>&1 | Out-String)
-    $statusExit = $LASTEXITCODE
-    Write-Host $statusOutput
-    if ($statusExit -ne 0) { throw "STATUS_FAILED=$statusExit" }
-    if ($statusOutput -notmatch 'Indexed Files:\s+\d+/\d+') { throw 'STATUS_INDEX_COUNT_MISSING' }
-    if ($statusOutput -notmatch 'Version:\s+4\.1\.14') { throw 'STATUS_VERSION_MISMATCH' }
+    $statusResult = Invoke-MvsCapture 'status'
+    Write-Host $statusResult.Output
+    if ($statusResult.ExitCode -ne 0) { throw "STATUS_FAILED=$($statusResult.ExitCode)" }
+    if ($statusResult.Output -notmatch 'Indexed Files:\s+\d+/\d+') { throw 'STATUS_INDEX_COUNT_MISSING' }
+    if ($statusResult.Output -notmatch 'Version:\s+4\.1\.14') { throw 'STATUS_VERSION_MISMATCH' }
 
     Write-Host '=== SEARCH DESIGN ==='
-    $designOutput = (& $Mvs search 'design baseline implementation drift Design Delta' 2>&1 | Out-String)
-    $designExit = $LASTEXITCODE
-    Write-Host $designOutput
-    if ($designExit -ne 0) { throw "SEARCH_DESIGN_FAILED=$designExit" }
-    if ($designOutput -notmatch 'CURRENT_DESIGN\.md') { throw 'SEARCH_DESIGN_EXPECTED_DOCUMENT_MISSING' }
+    $designResult = Invoke-MvsCapture 'search' 'design baseline implementation drift Design Delta'
+    Write-Host $designResult.Output
+    if ($designResult.ExitCode -ne 0) { throw "SEARCH_DESIGN_FAILED=$($designResult.ExitCode)" }
+    if ($designResult.Output -notmatch 'CURRENT_DESIGN\.md') { throw 'SEARCH_DESIGN_EXPECTED_DOCUMENT_MISSING' }
 
     Write-Host '=== SEARCH FAILURE ==='
-    $failureOutput = (& $Mvs search 'failure root cause fix validation commit evidence' 2>&1 | Out-String)
-    $failureExit = $LASTEXITCODE
-    Write-Host $failureOutput
-    if ($failureExit -ne 0) { throw "SEARCH_FAILURE_FAILED=$failureExit" }
-    if ($failureOutput -notmatch '(CURRENT_DESIGN\.md|DESIGN_DELTA\.md|README\.md)') {
+    $failureResult = Invoke-MvsCapture 'search' 'failure root cause fix validation commit evidence'
+    Write-Host $failureResult.Output
+    if ($failureResult.ExitCode -ne 0) { throw "SEARCH_FAILURE_FAILED=$($failureResult.ExitCode)" }
+    if ($failureResult.Output -notmatch '(CURRENT_DESIGN\.md|DESIGN_DELTA\.md|README\.md)') {
         throw 'SEARCH_FAILURE_EXPECTED_DOCUMENT_MISSING'
     }
 
