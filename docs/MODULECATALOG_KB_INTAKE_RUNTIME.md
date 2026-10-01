@@ -1,0 +1,89 @@
+# ModuleCatalog KBData receive-to-runtime boundary
+
+## Responsibility boundary
+
+ModuleCatalog owns reusable-asset creation, verification, search-ready KBData generation and transport.
+G-ACE KB starts at **receipt of a transported `gace.reusable-asset.v1` delivery**.
+The operational KB path must not clone/fetch ModuleCatalog or regenerate producer data.
+
+## Inbox contract
+
+Default Windows inbox:
+
+```text
+F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\ready\<delivery-id>\
+  manifest.json
+  assets\...
+```
+
+The transport side may use another delivery directory when it explicitly invokes the receiver with `-DeliveryRoot`.
+
+KB receipts are written under:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receipts\<catalog-commit>.json
+```
+
+Receipt states:
+
+```text
+ACCEPTED = transport payload passed admission and local projection was built.
+ACTIVE   = payload passed the existing KB runtime gates and is the current searchable snapshot.
+```
+
+## Operational pipeline
+
+```text
+transported delivery
+→ acceptance/integrity verification
+→ local structured projection
+→ active-snapshot replacement candidate
+→ staging search corpus
+→ existing BM25 / Vector / Knowledge Graph index
+→ repository-history MCP regression
+→ existing accepted-asset MCP regression
+→ new reusable-asset exact + natural MCP retrieval
+→ backup-backed current cutover
+→ post-cutover MCP verification from the actual current path
+→ ACTIVE receipt
+```
+
+A failure before cutover leaves the current KB unchanged. A failure after cutover begins triggers rollback to the prior formal records/search runtime/current reusable snapshot.
+
+## Data retention
+
+The active runtime keeps one current ModuleCatalog reusable snapshot rather than accumulating old Catalog commits in the active search index.
+Repository-history knowledge and non-reusable accepted source types are preserved.
+The current reusable structured snapshot retains:
+
+```text
+knowledge-records.jsonl
+knowledge-metadata.jsonl
+records/*.md
+delivery-manifest.json
+acceptance-state.json
+```
+
+Search results therefore remain traceable to the parent Asset, exact Catalog commit, source paths, verification, lifecycle, integrity and derivation boundary.
+
+## Commands
+
+Process one delivered bundle through the full KB runtime:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\receive-modulecatalog-kbdata-windows.ps1 `
+  -DeliveryRoot '<transported-delivery-directory>'
+```
+
+Process every ready delivery in the default inbox:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\process-modulecatalog-inbox-windows.ps1
+```
+
+## Completion definition
+
+A transported Catalog payload is not operational merely because it was copied or accepted.
+Completion requires an `ACTIVE` receipt after the existing KB runtime has indexed it and post-cutover MCP retrieval succeeds.
