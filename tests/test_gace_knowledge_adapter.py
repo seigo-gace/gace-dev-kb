@@ -116,6 +116,18 @@ class KnowledgeAdapterTests(unittest.TestCase):
         )
         self.assertEqual(rows[1]["validation"], "PASS")
 
+    def test_zero_max_count_retains_full_history_and_positive_limit_is_bounded(self) -> None:
+        path = self.repo / "history.txt"
+        shas: list[str] = []
+        for index in range(3):
+            path.write_text(f"{index}\n", encoding="utf-8")
+            shas.append(self.commit(f"feat: history {index}"))
+
+        self.assertEqual(adapter.list_commits(self.repo, "HEAD", 0), shas)
+        self.assertEqual(adapter.list_commits(self.repo, "HEAD", 2), shas[-2:])
+        with self.assertRaisesRegex(ValueError, "max_count must be >= 0"):
+            adapter.list_commits(self.repo, "HEAD", -1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
