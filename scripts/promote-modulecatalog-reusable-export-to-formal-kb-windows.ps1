@@ -12,7 +12,7 @@ if ($ExpectedRecordCount -lt 1) { throw "EXPECTED_RECORD_COUNT_INVALID=$Expected
 $Repo = Join-Path $Root 'repo'
 $RuntimePython = Join-Path $Root 'runtime\mcp-vector-search\Scripts\python.exe'
 $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
-$Combiner = Join-Path $Repo 'scripts\combine_knowledge_records.py'
+$SnapshotBuilder = Join-Path $Repo 'scripts\replace_modulecatalog_reusable_snapshot.py'
 $SafetyPatch = Join-Path $Repo 'scripts\patch-mvs-windows-trial-safety.ps1'
 $HistoryProbe = Join-Path $Repo 'tests\mcp_knowledge_client_e2e.py'
 $SkillProbe = Join-Path $Repo 'tests\mcp_verified_skill_trial_e2e.py'
@@ -32,10 +32,15 @@ $CurrentSearch = Join-Path $Root 'data\knowledge-search'
 $CurrentRecords = Join-Path $CurrentSearch 'records'
 $StagingSearch = Join-Path $Root 'data\knowledge-search.reusable-staging'
 $StagingRecords = Join-Path $StagingSearch 'records'
-$OldSkillRecords = Join-Path $Root 'data\knowledge-sources\accepted\debugai-code-repair-verification-skill-pack\knowledge-records.jsonl'
+$AcceptedRoot = Join-Path $Root 'data\knowledge-sources\accepted'
+$OldSkillRecords = Join-Path $AcceptedRoot 'debugai-code-repair-verification-skill-pack\knowledge-records.jsonl'
+$CurrentReusableSnapshot = Join-Path $AcceptedRoot 'modulecatalog-reusable-current'
+$StagingReusableSnapshot = Join-Path $AcceptedRoot 'modulecatalog-reusable-staging'
 $PromotionMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-promotion-pass.json'
+$ReusableCorpusPrefix = 'accepted-modulecatalog-reusable-'
+$ModuleCatalogRepository = 'seigo-gace/modular-catalog'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$Combiner,$SafetyPatch,$HistoryProbe,$SkillProbe,$ReusableProbe,$TrialMarker,$TrialExportManifest,$NewRecords,$NewMetadata,$NewCorpus,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$HistoryProbe,$SkillProbe,$ReusableProbe,$TrialMarker,$TrialExportManifest,$NewRecords,$NewMetadata,$NewCorpus,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -95,20 +100,23 @@ $CurrentFormalHash = Get-Sha256 $FormalJsonl
 if ($CurrentFormalHash -ne [string]$Marker.formalKbAfterSha256) { throw "FORMAL_KB_CHANGED_SINCE_TRIAL current=$CurrentFormalHash trial=$($Marker.formalKbAfterSha256)" }
 Write-Host "TRIAL_AUTHORITY=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount RECORDS=$ExpectedRecordCount"
 
-$BaseCount = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() }).Count
-$BaseCorpusCount = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File).Count
+$FormalRows = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+$CurrentFormalCount = $FormalRows.Count
+$ExistingReusableCount = @($FormalRows | Where-Object { [string]$_.type -eq 'reusable_asset' -and [string]$_.repository -eq $ModuleCatalogRepository }).Count
+$BaseCount = $CurrentFormalCount - $ExistingReusableCount
+$CurrentCorpusCount = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File).Count
 if ($BaseCount -lt 1) { throw 'BASE_FORMAL_RECORD_COUNT_ZERO' }
-if ($BaseCorpusCount -ne $BaseCount) { throw "BASE_FORMAL_CORPUS_COUNT_MISMATCH records=$BaseCount corpus=$BaseCorpusCount" }
+if ($CurrentCorpusCount -ne $CurrentFormalCount) { throw "CURRENT_FORMAL_CORPUS_COUNT_MISMATCH records=$CurrentFormalCount corpus=$CurrentCorpusCount" }
 $ExpectedTotal = $BaseCount + $ExpectedRecordCount
-Write-Host "BASE_FORMAL_KB=PASS RECORDS=$BaseCount CORPUS=$BaseCorpusCount EXPECTED_TOTAL=$ExpectedTotal"
+Write-Host "BASE_FORMAL_KB=PASS TOTAL=$CurrentFormalCount ACTIVE_REUSABLE=$ExistingReusableCount BASE=$BaseCount EXPECTED_TOTAL=$ExpectedTotal"
 
-Write-Host '=== BUILD NEXT FORMAL RECORD SET ==='
+Write-Host '=== BUILD REPLACEABLE NEXT FORMAL RECORD SET ==='
 Remove-Item $NextFormal -Force -ErrorAction SilentlyContinue
-& $RuntimePython -B $Combiner --input $FormalJsonl --input $NewRecords --output $NextFormal
-if ($LASTEXITCODE -ne 0) { throw "FORMAL_REUSABLE_COMBINE_FAILED=$LASTEXITCODE" }
+& $RuntimePython -B $SnapshotBuilder --current $FormalJsonl --replacement $NewRecords --output $NextFormal --expected-replacement-count $ExpectedRecordCount
+if ($LASTEXITCODE -ne 0) { throw "FORMAL_REUSABLE_SNAPSHOT_BUILD_FAILED=$LASTEXITCODE" }
 $NextCount = @(Get-Content $NextFormal | Where-Object { $_.Trim() }).Count
 if ($NextCount -ne $ExpectedTotal) { throw "FORMAL_REUSABLE_COUNT_MISMATCH expected=$ExpectedTotal actual=$NextCount" }
-Write-Host "NEXT_FORMAL_RECORDS=PASS RECORDS=$NextCount"
+Write-Host "NEXT_FORMAL_RECORDS=PASS RECORDS=$NextCount REPLACED=$ExistingReusableCount ADDED=$ExpectedRecordCount"
 
 Write-Host '=== BUILD STAGING SEARCH CORPUS ==='
 if (Test-Path $StagingSearch) { Remove-Item $StagingSearch -Recurse -Force }
@@ -116,14 +124,18 @@ New-Item -ItemType Directory -Path $StagingSearch -Force | Out-Null
 $init = Invoke-MvsCapture -Arguments @('init','--force','--extensions','.md','--no-auto-index','--no-mcp','--no-auto-indexing') -TimeoutSeconds 180
 if ($init.ExitCode -ne 0) { throw "STAGING_MVS_INIT_FAILED=$($init.ExitCode)" }
 New-Item -ItemType Directory -Path $StagingRecords -Force | Out-Null
-Copy-Item (Join-Path $CurrentRecords '*.md') $StagingRecords -Force
-$prefix = "accepted-modulecatalog-reusable-$($CatalogCommit.Substring(0,12))-"
+
+$BaseCorpusFiles = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File | Where-Object { -not $_.Name.StartsWith($ReusableCorpusPrefix) })
+foreach ($file in $BaseCorpusFiles) { Copy-Item $file.FullName (Join-Path $StagingRecords $file.Name) -Force }
+if ($BaseCorpusFiles.Count -ne $BaseCount) { throw "BASE_CORPUS_AFTER_REUSABLE_REMOVAL_MISMATCH expected=$BaseCount actual=$($BaseCorpusFiles.Count)" }
+
+$prefix = "$ReusableCorpusPrefix$($CatalogCommit.Substring(0,12))-"
 foreach ($file in Get-ChildItem $NewCorpus -Filter '*.md' -File) {
     Copy-Item $file.FullName (Join-Path $StagingRecords ($prefix + $file.Name)) -Force
 }
 $StagingCorpusCount = @(Get-ChildItem $StagingRecords -Filter '*.md' -File).Count
 if ($StagingCorpusCount -ne $ExpectedTotal) { throw "STAGING_CORPUS_COUNT_MISMATCH expected=$ExpectedTotal actual=$StagingCorpusCount" }
-Write-Host "STAGING_CORPUS=PASS RECORDS=$StagingCorpusCount"
+Write-Host "STAGING_CORPUS=PASS BASE=$BaseCount REUSABLE=$ExpectedRecordCount TOTAL=$StagingCorpusCount"
 
 Write-Host '=== INDEX STAGING FORMAL KB ==='
 & $SafetyPatch -Root $Root
@@ -172,17 +184,50 @@ Write-Host '=== STAGING MCP: MODULECATALOG REUSABLE ASSETS ==='
 if ($LASTEXITCODE -ne 0) { throw "STAGING_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
 Write-Host 'STAGING_FORMAL_KB=PASS'
 
+Write-Host '=== PREPARE CURRENT REUSABLE STRUCTURED SNAPSHOT ==='
+if (Test-Path $StagingReusableSnapshot) { Remove-Item $StagingReusableSnapshot -Recurse -Force }
+New-Item -ItemType Directory -Path $StagingReusableSnapshot -Force | Out-Null
+Copy-Item $NewRecords (Join-Path $StagingReusableSnapshot 'knowledge-records.jsonl') -Force
+Copy-Item $NewMetadata (Join-Path $StagingReusableSnapshot 'knowledge-metadata.jsonl') -Force
+Copy-Item $TrialExportManifest (Join-Path $StagingReusableSnapshot 'export-manifest.json') -Force
+Copy-Item $TrialMarker (Join-Path $StagingReusableSnapshot 'trial-pass.json') -Force
+$SnapshotCorpus = Join-Path $StagingReusableSnapshot 'records'
+New-Item -ItemType Directory -Path $SnapshotCorpus -Force | Out-Null
+Copy-Item (Join-Path $NewCorpus '*.md') $SnapshotCorpus -Force
+$SnapshotState = [ordered]@{
+    schemaVersion = 1
+    status = 'STAGED'
+    catalogRepository = $ModuleCatalogRepository
+    catalogCommit = $CatalogCommit
+    assetCount = $ExpectedAssetCount
+    recordCount = $ExpectedRecordCount
+    knowledgeRecordsSha256 = Get-Sha256 $NewRecords
+    knowledgeMetadataSha256 = Get-Sha256 $NewMetadata
+    exportManifestSha256 = Get-Sha256 $TrialExportManifest
+    stagedAtUtc = [DateTime]::UtcNow.ToString('o')
+}
+$SnapshotState | ConvertTo-Json -Depth 8 | Set-Content -Path (Join-Path $StagingReusableSnapshot 'state.json') -Encoding UTF8
+Write-Host "REUSABLE_STRUCTURED_SNAPSHOT=STAGED RECORDS=$ExpectedRecordCount"
+
 Write-Host '=== VERIFIED CUTOVER ==='
 $timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 $BackupSearch = Join-Path $Root "data\knowledge-search.previous-$timestamp"
 $BackupFormal = Join-Path $Root "data\knowledge-records\formal-kb.previous-$timestamp.jsonl"
+$BackupReusableSnapshot = Join-Path $AcceptedRoot "modulecatalog-reusable.previous-$timestamp"
 Copy-Item $FormalJsonl $BackupFormal -Force
 $SearchMoved = $false
+$SnapshotMoved = $false
 try {
     Move-Item $CurrentSearch $BackupSearch
     $SearchMoved = $true
     Move-Item $StagingSearch $CurrentSearch
     Move-Item $NextFormal $FormalJsonl -Force
+
+    if (Test-Path $CurrentReusableSnapshot) {
+        Move-Item $CurrentReusableSnapshot $BackupReusableSnapshot
+        $SnapshotMoved = $true
+    }
+    Move-Item $StagingReusableSnapshot $CurrentReusableSnapshot
 }
 catch {
     if (Test-Path $CurrentSearch) {
@@ -193,14 +238,35 @@ catch {
         Move-Item $BackupSearch $CurrentSearch -ErrorAction SilentlyContinue
     }
     if (Test-Path $BackupFormal) { Copy-Item $BackupFormal $FormalJsonl -Force -ErrorAction SilentlyContinue }
+
+    if (Test-Path $CurrentReusableSnapshot) {
+        $FailedSnapshot = Join-Path $AcceptedRoot "modulecatalog-reusable.failed-cutover-$timestamp"
+        Move-Item $CurrentReusableSnapshot $FailedSnapshot -ErrorAction SilentlyContinue
+    }
+    if ($SnapshotMoved -and (Test-Path $BackupReusableSnapshot) -and -not (Test-Path $CurrentReusableSnapshot)) {
+        Move-Item $BackupReusableSnapshot $CurrentReusableSnapshot -ErrorAction SilentlyContinue
+    }
     throw
 }
 
 $FinalCount = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() }).Count
 $FinalCorpusCount = @(Get-ChildItem (Join-Path $CurrentSearch 'records') -Filter '*.md' -File).Count
+$CurrentMetadata = Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl'
+$CurrentStructuredRecords = Join-Path $CurrentReusableSnapshot 'knowledge-records.jsonl'
+if (-not (Test-Path $CurrentMetadata) -or -not (Test-Path $CurrentStructuredRecords)) { throw 'CURRENT_REUSABLE_STRUCTURED_SNAPSHOT_MISSING' }
+$FinalMetadataCount = @(Get-Content $CurrentMetadata | Where-Object { $_.Trim() }).Count
+$FinalStructuredCount = @(Get-Content $CurrentStructuredRecords | Where-Object { $_.Trim() }).Count
 if ($FinalCount -ne $ExpectedTotal -or $FinalCorpusCount -ne $ExpectedTotal) {
     throw "POST_CUTOVER_COUNT_MISMATCH records=$FinalCount corpus=$FinalCorpusCount expected=$ExpectedTotal"
 }
+if ($FinalMetadataCount -ne $ExpectedRecordCount -or $FinalStructuredCount -ne $ExpectedRecordCount) {
+    throw "POST_CUTOVER_REUSABLE_SNAPSHOT_COUNT_MISMATCH metadata=$FinalMetadataCount records=$FinalStructuredCount expected=$ExpectedRecordCount"
+}
+
+$CurrentStatePath = Join-Path $CurrentReusableSnapshot 'state.json'
+$CurrentState = Get-Content $CurrentStatePath -Raw | ConvertFrom-Json
+$CurrentState.status = 'ACTIVE'
+$CurrentState | ConvertTo-Json -Depth 8 | Set-Content -Path $CurrentStatePath -Encoding UTF8
 
 $Promotion = [ordered]@{
     schemaVersion = 1
@@ -208,18 +274,24 @@ $Promotion = [ordered]@{
     catalogCommit = $CatalogCommit
     assetCount = $ExpectedAssetCount
     reusableRecordCount = $ExpectedRecordCount
+    replacedReusableRecordCount = $ExistingReusableCount
     baseRecordCount = $BaseCount
     totalRecordCount = $ExpectedTotal
     formalKbSha256 = Get-Sha256 $FormalJsonl
+    reusableMetadataSha256 = Get-Sha256 $CurrentMetadata
+    reusableRecordsSha256 = Get-Sha256 $CurrentStructuredRecords
     trialMarkerSha256 = Get-Sha256 $TrialMarker
+    currentReusableSnapshot = $CurrentReusableSnapshot
     backupFormal = $BackupFormal
     backupSearch = $BackupSearch
+    backupReusableSnapshot = if ($SnapshotMoved) { $BackupReusableSnapshot } else { $null }
     promotedAtUtc = [DateTime]::UtcNow.ToString('o')
 }
 $Promotion | ConvertTo-Json -Depth 8 | Set-Content -Path $PromotionMarker -Encoding UTF8
 
-Write-Host "GACE_MODULECATALOG_REUSABLE_FORMAL_PROMOTION=PASS BASE=$BaseCount ADDED=$ExpectedRecordCount TOTAL=$ExpectedTotal"
+Write-Host "GACE_MODULECATALOG_REUSABLE_FORMAL_PROMOTION=PASS BASE=$BaseCount REPLACED=$ExistingReusableCount ADDED=$ExpectedRecordCount TOTAL=$ExpectedTotal"
 Write-Host "PINNED_MODULECATALOG_COMMIT=$CatalogCommit"
+Write-Host "CURRENT_REUSABLE_SNAPSHOT=$CurrentReusableSnapshot"
 Write-Host "BACKUP_FORMAL=$BackupFormal"
 Write-Host "BACKUP_SEARCH=$BackupSearch"
 Write-Host "PROMOTION_MARKER=$PromotionMarker"
