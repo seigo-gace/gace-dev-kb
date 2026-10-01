@@ -10,8 +10,9 @@ $Main = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\cli\main.py'
 $Output = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\cli\output.py'
 $KnowledgeGraph = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\knowledge_graph.py'
 $ChunkProcessor = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\core\chunk_processor.py'
+$McpServer = Join-Path $Runtime 'Lib\site-packages\mcp_vector_search\mcp\server.py'
 
-foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor)) {
+foreach ($p in @($Py,$Mvs,$Main,$Output,$KnowledgeGraph,$ChunkProcessor,$McpServer)) {
     if (-not (Test-Path $p)) { throw "REQUIRED_PATH_MISSING=$p" }
 }
 
@@ -43,8 +44,25 @@ if ($LASTEXITCODE -ne 0) { throw "WINDOWS_MP_CONTEXT_PROBE_FAILED=$LASTEXITCODE"
 $mpContext = ([string]$mpOutput[-1]).Trim()
 if ($mpContext -ne 'spawn') { throw "WINDOWS_MP_CONTEXT_NOT_SPAWN=$mpContext" }
 
+$mcpText = Get-Content $McpServer -Raw
+if ($mcpText -notmatch 'on_list_tools\s*=\s*handle_list_tools') {
+    throw 'MCP_SDK2_SERVER_PATCH_MISSING'
+}
+if ($mcpText -notmatch 'server\.create_initialization_options\(\)') {
+    throw 'MCP_SDK2_INIT_OPTIONS_PATCH_MISSING'
+}
+
+$mcpProbe = @(& $Py -c 'from mcp_vector_search.mcp.server import create_mcp_server; s=create_mcp_server(enable_file_watching=False); print(type(s).__name__)' 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ($mcpProbe -join [Environment]::NewLine)
+    throw "MCP_SDK2_SERVER_CREATE_PROBE_FAILED=$LASTEXITCODE"
+}
+$mcpServerType = ([string]$mcpProbe[-1]).Trim()
+if ($mcpServerType -ne 'Server') { throw "MCP_SERVER_TYPE_UNEXPECTED=$mcpServerType" }
+
 & $Mvs --help *> $null
 if ($LASTEXITCODE -ne 0) { throw "MVS_HELP_FAILED=$LASTEXITCODE" }
 
 Write-Host "MVS_WINDOWS_MP_CONTEXT=$mpContext"
+Write-Host 'MVS_MCP_SDK2_COMPAT=PASS'
 Write-Host 'MVS_WINDOWS_COMPAT_VERIFY=PASS'
