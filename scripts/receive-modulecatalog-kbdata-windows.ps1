@@ -14,6 +14,7 @@ foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$DeliveryRoot,$ManifestPa
 }
 
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
+$ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 $LockPath = Join-Path $IntakeRoot 'receive.lock'
 $LockStream = $null
@@ -47,6 +48,16 @@ try {
 
     $Receipt = Get-Content $ReceiptPath -Raw | ConvertFrom-Json
     if ([string]$Receipt.status -eq 'ACTIVE') {
+        if (-not (Test-Path $ActivationMarker)) {
+            throw "ACTIVE_RECEIPT_WITHOUT_CURRENT_MARKER=$ReceiptPath"
+        }
+        $Current = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
+        if ([string]$Current.status -ne 'ACTIVE') {
+            throw "CURRENT_MARKER_STATUS_INVALID=$($Current.status)"
+        }
+        if ([string]$Current.catalogCommit -ne $CatalogCommit) {
+            throw "PREVIOUSLY_ACTIVE_DELIVERY_IS_NOT_CURRENT incoming=$CatalogCommit current=$($Current.catalogCommit)"
+        }
         Write-Host "GACE_MODULECATALOG_RECEIVE=PASS IDEMPOTENT=YES STATUS=ACTIVE COMMIT=$CatalogCommit"
         Write-Host "RECEIPT=$ReceiptPath"
         return
@@ -59,6 +70,9 @@ try {
 
     $FinalReceipt = Get-Content $ReceiptPath -Raw | ConvertFrom-Json
     if ([string]$FinalReceipt.status -ne 'ACTIVE' -or [string]$FinalReceipt.catalogCommit -ne $CatalogCommit) { throw 'FINAL_RECEIPT_NOT_ACTIVE' }
+    if (-not (Test-Path $ActivationMarker)) { throw "FINAL_CURRENT_MARKER_MISSING=$ActivationMarker" }
+    $FinalCurrent = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
+    if ([string]$FinalCurrent.status -ne 'ACTIVE' -or [string]$FinalCurrent.catalogCommit -ne $CatalogCommit) { throw 'FINAL_CURRENT_MARKER_MISMATCH' }
     Write-Host "GACE_MODULECATALOG_RECEIVE=PASS STATUS=ACTIVE COMMIT=$CatalogCommit ASSETS=$($FinalReceipt.assetCount) RECORDS=$($FinalReceipt.knowledgeUnitCount)"
     Write-Host "RECEIPT=$ReceiptPath"
 }
