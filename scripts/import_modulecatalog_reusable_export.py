@@ -308,6 +308,7 @@ def render_markdown(
     append_search_line(lines, "Asset Name", identity.get("name"))
     append_search_line(lines, "Asset Version", identity.get("version"))
     append_search_line(lines, "Asset Kind", identity.get("asset_kind"))
+    append_search_line(lines, "Symbol", identity.get("symbol"))
     append_search_line(lines, "Knowledge Kind", unit.get("knowledge_kind"))
     append_search_line(lines, "Data Class", data_class(unit))
     append_search_line(lines, "Lifecycle", lifecycle.get("status"))
@@ -557,6 +558,7 @@ def import_export(
                 "schema_version": 1,
                 "knowledge_id": unit_id,
                 "parent_asset_id": asset_id,
+                "identity": asset["identity"],
                 "asset_kind": identity.get("asset_kind"),
                 "knowledge_kind": kind,
                 "name": unit.get("title"),
@@ -574,12 +576,7 @@ def import_export(
                 "verification": asset["verification"],
                 "provenance": asset["provenance"],
                 "lifecycle": asset["lifecycle"],
-                "integrity": {
-                    "asset_hash": asset["integrity"].get("asset_hash"),
-                    "meta_hash": asset["integrity"].get("meta_hash"),
-                    "manifest_algorithm": asset["integrity"].get("manifest_algorithm"),
-                    "bundle_hash": expected_bundle_hash,
-                },
+                "integrity": {**asset["integrity"], "bundle_hash": expected_bundle_hash},
                 "asset_derivation": asset["derivation"],
                 "unit_derivation": unit["derivation"],
                 "source_paths": unit.get("source_paths"),
