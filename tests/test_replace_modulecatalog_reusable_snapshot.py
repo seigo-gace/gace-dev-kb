@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import shutil
 import sys
 import tempfile
@@ -38,16 +37,43 @@ class ReusableSnapshotReplaceTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_replaces_only_reusable_snapshot_and_preserves_other_knowledge(self) -> None:
+    def test_replaces_all_modulecatalog_asset_projections_and_preserves_history(self) -> None:
         current = [
-            record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="history"),
-            record(type_="implementation", repository="seigo-gace/modular-catalog", commit="s1", source="old-skill"),
-            record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="old", source="asset-a-old"),
-            record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="old", source="asset-b-old"),
+            record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="git:history"),
+            record(
+                type_="implementation",
+                repository="seigo-gace/modular-catalog",
+                commit="legacy",
+                source="modulecatalog:seigo-gace/modular-catalog@legacy#assets/debugai-pack/source/index.js::skillA",
+            ),
+            record(
+                type_="reusable_asset",
+                repository="seigo-gace/modular-catalog",
+                commit="old",
+                source="modulecatalog:seigo-gace/modular-catalog@old#assets/asset-a::unit-a",
+            ),
+            # Ordinary repository-history knowledge about ModuleCatalog is not an
+            # accepted asset projection and must survive snapshot replacement.
+            record(
+                type_="fix",
+                repository="seigo-gace/modular-catalog",
+                commit="hist",
+                source="git:seigo-gace/modular-catalog@hist",
+            ),
         ]
         replacement = [
-            record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="new", source="asset-a-new"),
-            record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="new", source="asset-b-new"),
+            record(
+                type_="reusable_asset",
+                repository="seigo-gace/modular-catalog",
+                commit="new",
+                source="modulecatalog:seigo-gace/modular-catalog@new#assets/asset-a::unit-a",
+            ),
+            record(
+                type_="reusable_asset",
+                repository="seigo-gace/modular-catalog",
+                commit="new",
+                source="modulecatalog:seigo-gace/modular-catalog@new#assets/asset-b::unit-b",
+            ),
         ]
 
         combined, removed, base_count = module.replace_snapshot(current, replacement)
@@ -55,17 +81,24 @@ class ReusableSnapshotReplaceTests(unittest.TestCase):
         self.assertEqual(removed, 2)
         self.assertEqual(base_count, 2)
         self.assertEqual(len(combined), 4)
-        self.assertIn("history", {row["source"] for row in combined})
-        self.assertIn("old-skill", {row["source"] for row in combined})
-        self.assertNotIn("asset-a-old", {row["source"] for row in combined})
-        self.assertIn("asset-a-new", {row["source"] for row in combined})
+        sources = {row["source"] for row in combined}
+        self.assertIn("git:history", sources)
+        self.assertIn("git:seigo-gace/modular-catalog@hist", sources)
+        self.assertFalse(any("debugai-pack" in source for source in sources))
+        self.assertFalse(any("@old#assets/asset-a" in source for source in sources))
+        self.assertTrue(any("@new#assets/asset-a" in source for source in sources))
 
     def test_same_snapshot_is_idempotent(self) -> None:
         replacement = [
-            record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="same", source="asset-a"),
+            record(
+                type_="reusable_asset",
+                repository="seigo-gace/modular-catalog",
+                commit="same",
+                source="modulecatalog:seigo-gace/modular-catalog@same#assets/asset-a::unit-a",
+            ),
         ]
         current = [
-            record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="history"),
+            record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="git:history"),
             *replacement,
         ]
 
@@ -74,17 +107,42 @@ class ReusableSnapshotReplaceTests(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertEqual(base_count, 1)
         self.assertEqual(len(combined), 2)
-        self.assertEqual(sum(1 for row in combined if row["source"] == "asset-a"), 1)
+        self.assertEqual(sum(1 for row in combined if "asset-a::unit-a" in row["source"]), 1)
 
     def test_rejects_non_reusable_replacement(self) -> None:
-        current = [record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="history")]
-        replacement = [record(type_="implementation", repository="seigo-gace/modular-catalog", commit="new", source="wrong")]
+        current = [record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="git:history")]
+        replacement = [
+            record(
+                type_="implementation",
+                repository="seigo-gace/modular-catalog",
+                commit="new",
+                source="modulecatalog:seigo-gace/modular-catalog@new#assets/wrong",
+            )
+        ]
+        with self.assertRaisesRegex(RuntimeError, "REPLACEMENT_RECORD_NOT_MODULECATALOG_REUSABLE"):
+            module.replace_snapshot(current, replacement)
+
+    def test_rejects_replacement_without_modulecatalog_source_scheme(self) -> None:
+        current = [record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="git:history")]
+        replacement = [
+            record(
+                type_="reusable_asset",
+                repository="seigo-gace/modular-catalog",
+                commit="new",
+                source="git:seigo-gace/modular-catalog@new",
+            )
+        ]
         with self.assertRaisesRegex(RuntimeError, "REPLACEMENT_RECORD_NOT_MODULECATALOG_REUSABLE"):
             module.replace_snapshot(current, replacement)
 
     def test_rejects_duplicate_replacement_identity(self) -> None:
-        current = [record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="history")]
-        row = record(type_="reusable_asset", repository="seigo-gace/modular-catalog", commit="new", source="asset-a")
+        current = [record(type_="implementation", repository="seigo-gace/gace-dev-kb", commit="h1", source="git:history")]
+        row = record(
+            type_="reusable_asset",
+            repository="seigo-gace/modular-catalog",
+            commit="new",
+            source="modulecatalog:seigo-gace/modular-catalog@new#assets/asset-a::unit-a",
+        )
         with self.assertRaisesRegex(RuntimeError, "REPLACEMENT_RECORD_DUPLICATE"):
             module.replace_snapshot(current, [row, dict(row)])
 
