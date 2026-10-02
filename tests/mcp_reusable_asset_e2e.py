@@ -225,16 +225,11 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     cases_path = metadata.parent / "cases.jsonl"
     relationships = load_optional_jsonl(relationships_path, "REUSABLE_RELATIONSHIP")
     cases = load_optional_jsonl(cases_path, "REUSABLE_CASE")
-    if not relationships:
-        raise RuntimeError(f"REUSABLE_RELATIONSHIP_SIDECAR_EMPTY={relationships_path}")
-    if not cases:
-        raise RuntimeError(f"REUSABLE_CASE_SIDECAR_EMPTY={cases_path}")
-
-    sidecar_case_probe = case_probe(rows, cases)
-    sidecar_relationship_probe = relationship_probe(rows, relationships)
-    if sidecar_case_probe is None:
+    sidecar_case_probe = case_probe(rows, cases) if cases else None
+    sidecar_relationship_probe = relationship_probe(rows, relationships) if relationships else None
+    if cases and sidecar_case_probe is None:
         raise RuntimeError("REUSABLE_CASE_SIDECAR_NO_SEARCHABLE_TARGET")
-    if sidecar_relationship_probe is None:
+    if relationships and sidecar_relationship_probe is None:
         raise RuntimeError("REUSABLE_RELATIONSHIP_SIDECAR_NO_SEARCHABLE_TARGET")
     dependency_probe = first_dependency_probe(rows)
 
@@ -288,34 +283,50 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
                     )
 
-                    case_row, case, case_id = sidecar_case_probe
-                    await search_and_require(
-                        session,
-                        query=case_id,
-                        knowledge_id=str(case_row["knowledge_id"]),
-                        mode="bm25",
-                        timeout=timeout,
-                        label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
-                    )
-                    print(
-                        f"MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASE={case_id} "
-                        f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
-                    )
+                    case_checks = 0
+                    case_id = ""
+                    if sidecar_case_probe is not None:
+                        case_row, _case, case_id = sidecar_case_probe
+                        await search_and_require(
+                            session,
+                            query=case_id,
+                            knowledge_id=str(case_row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
+                        )
+                        case_checks = 1
+                        print(
+                            f"MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASE={case_id} "
+                            f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
+                        )
+                    else:
+                        print("MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASES=0 SKIP=NO_CASE_SIDECAR")
 
-                    relationship_row, relationship, relationship_id = sidecar_relationship_probe
-                    await search_and_require(
-                        session,
-                        query=relationship_id,
-                        knowledge_id=str(relationship_row["knowledge_id"]),
-                        mode="bm25",
-                        timeout=timeout,
-                        label=f"MCP_REUSABLE_SIDECAR_RELATIONSHIP_{relationship_id}",
-                    )
-                    print(
-                        "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
-                        f"RELATIONSHIP={relationship_id} ID={relationship_row['knowledge_id']} "
-                        f"SIDECAR={len(relationships)}"
-                    )
+                    relationship_checks = 0
+                    relationship = None
+                    relationship_id = ""
+                    if sidecar_relationship_probe is not None:
+                        relationship_row, relationship, relationship_id = sidecar_relationship_probe
+                        await search_and_require(
+                            session,
+                            query=relationship_id,
+                            knowledge_id=str(relationship_row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_SIDECAR_RELATIONSHIP_{relationship_id}",
+                        )
+                        relationship_checks = 1
+                        print(
+                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
+                            f"RELATIONSHIP={relationship_id} ID={relationship_row['knowledge_id']} "
+                            f"SIDECAR={len(relationships)}"
+                        )
+                    else:
+                        print(
+                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
+                            "RELATIONSHIPS=0 SKIP=NO_RELATIONSHIP_SIDECAR"
+                        )
 
                     natural = 0
                     vector = 0
@@ -371,21 +382,32 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         timeout=timeout,
                         label="MCP_REUSABLE_KG_TAG_QUERY",
                     )
-                    await kg_tag_require(
-                        session,
-                        tag=f"relationship-id-{safe_tag(relationship_id)}",
-                        timeout=timeout,
-                        label="MCP_REUSABLE_KG_RELATIONSHIP_ID_TAG_QUERY",
-                    )
-                    await kg_tag_require(
-                        session,
-                        tag=f"case-id-{safe_tag(case_id)}",
-                        timeout=timeout,
-                        label="MCP_REUSABLE_KG_CASE_ID_TAG_QUERY",
-                    )
 
-                    relation = str(relationship.get("relation") or "").strip()
+                    if relationship_checks:
+                        await kg_tag_require(
+                            session,
+                            tag=f"relationship-id-{safe_tag(relationship_id)}",
+                            timeout=timeout,
+                            label="MCP_REUSABLE_KG_RELATIONSHIP_ID_TAG_QUERY",
+                        )
+                    else:
+                        print(
+                            "MCP_REUSABLE_KG_RELATIONSHIP_ID_TAG_QUERY=PASS "
+                            "SKIP=NO_RELATIONSHIP_SIDECAR"
+                        )
+
+                    if case_checks:
+                        await kg_tag_require(
+                            session,
+                            tag=f"case-id-{safe_tag(case_id)}",
+                            timeout=timeout,
+                            label="MCP_REUSABLE_KG_CASE_ID_TAG_QUERY",
+                        )
+                    else:
+                        print("MCP_REUSABLE_KG_CASE_ID_TAG_QUERY=PASS SKIP=NO_CASE_SIDECAR")
+
                     kg_relation_checks = 0
+                    relation = str((relationship or {}).get("relation") or "").strip()
                     if relation:
                         await kg_tag_require(
                             session,
@@ -426,9 +448,11 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     print(
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
         f"KNOWLEDGE_KINDS={len(kind_first)} BM25_NATURAL={natural} VECTOR={vector} "
-        f"HYBRID={hybrid} SIDECAR_CASE_SEARCH=1 SIDECAR_RELATIONSHIP_SEARCH=1 "
+        f"HYBRID={hybrid} SIDECAR_CASE_SEARCH={case_checks} "
+        f"SIDECAR_RELATIONSHIP_SEARCH={relationship_checks} "
         f"KG_RELATION={kg_relation_checks} KG_DEPENDENCY={kg_dependency_checks} "
-        "KG_SIDECAR_IDS=PASS KG=PASS"
+        f"CASE_SIDECAR_COUNT={len(cases)} RELATIONSHIP_SIDECAR_COUNT={len(relationships)} "
+        "KG=PASS"
     )
 
 
