@@ -48,7 +48,8 @@ jobs:
             'scripts/activate-modulecatalog-accepted-windows.ps1',
             'scripts/receive-modulecatalog-kbdata-windows.ps1',
             'scripts/process-modulecatalog-inbox-windows.ps1',
-            'scripts/check-modulecatalog-kb-runtime-windows.ps1'
+            'scripts/check-modulecatalog-kb-runtime-windows.ps1',
+            'tests/test_modulecatalog_inbox_lifecycle.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -65,36 +66,9 @@ jobs:
             Write-Host "POWERSHELL_PARSE=PASS FILE=$file"
           }
 
-      - name: Inbox fail-closed behavior
+      - name: Inbox lifecycle and crash recovery
         shell: pwsh
-        run: |
-          $root = Join-Path $env:RUNNER_TEMP 'gace-inbox-contract'
-          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
-          $repoScripts = Join-Path $root 'repo/scripts'
-          $ready = Join-Path $root 'data/knowledge-inbox/modulecatalog/ready'
-          New-Item -ItemType Directory -Path $repoScripts,$ready -Force | Out-Null
-          Set-Content -Path (Join-Path $repoScripts 'receive-modulecatalog-kbdata-windows.ps1') -Value '# fixture receiver' -Encoding UTF8
-
-          & pwsh -NoProfile -File scripts/process-modulecatalog-inbox-windows.ps1 -Root $root -InboxRoot $ready
-          if ($LASTEXITCODE -ne 0) { throw "EMPTY_INBOX_GATE_FAILED=$LASTEXITCODE" }
-
-          New-Item -ItemType Directory -Path (Join-Path $ready 'incomplete') -Force | Out-Null
-          & pwsh -NoProfile -File scripts/process-modulecatalog-inbox-windows.ps1 -Root $root -InboxRoot $ready
-          if ($LASTEXITCODE -ne 0) { throw "INCOMPLETE_INBOX_GATE_FAILED=$LASTEXITCODE" }
-
-          foreach ($name in @('delivery-a','delivery-b')) {
-            $dir = Join-Path $ready $name
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            Set-Content -Path (Join-Path $dir 'manifest.json') -Value '{}' -Encoding UTF8
-          }
-          $output = @(& pwsh -NoProfile -File scripts/process-modulecatalog-inbox-windows.ps1 -Root $root -InboxRoot $ready 2>&1)
-          $code = $LASTEXITCODE
-          if ($code -eq 0) { throw 'MULTIPLE_READY_GATE_DID_NOT_FAIL' }
-          if (($output -join "`n") -notmatch 'MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY') {
-            throw "MULTIPLE_READY_GATE_WRONG_FAILURE=$($output -join ' | ')"
-          }
-          Write-Host 'GACE_MODULECATALOG_INBOX_FAIL_CLOSED=PASS'
-          exit 0
+        run: pwsh -NoProfile -File tests/test_modulecatalog_inbox_lifecycle.ps1
 
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
