@@ -66,12 +66,12 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
     for value in classification.get("tags") or []:
         tags.append(f"catalog-tag-{safe_tag(value)}")
 
-    # Relationship semantics are already canonical/verified in the accepted
-    # projection. Surface their relation types as deterministic KG tags so the
-    # existing kg_query tag path can retrieve them without a second graph engine.
-    for relationship in row.get("relationships") or []:
-        if isinstance(relationship, dict) and relationship.get("relation"):
-            tags.append(f"relation-{safe_tag(relationship['relation'])}")
+    for rel in row.get("relationships") or []:
+        if not isinstance(rel, dict):
+            continue
+        relation = str(rel.get("relation") or "").strip()
+        if relation:
+            tags.append(f"relation-{safe_tag(relation)}")
 
     # Asset-level dependency semantics are canonical Catalog data. Project them
     # only on the discovery document so the existing MVS KG gets one stable
@@ -111,6 +111,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
 
     unit_to_file: dict[str, str] = {}
     asset_to_preferred_file: dict[str, str] = {}
+    explicit_contains_targets: dict[str, set[str]] = {}
     for row, path in zip(rows, files, strict=True):
         knowledge_id = str(row.get("knowledge_id") or "")
         asset_id = str(row.get("parent_asset_id") or "")
@@ -127,10 +128,20 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         if asset_id not in asset_to_preferred_file or row.get("knowledge_kind") == "discovery":
             asset_to_preferred_file[asset_id] = path.name
 
+        for rel in row.get("relationships") or []:
+            if not isinstance(rel, dict):
+                continue
+            if (
+                str(rel.get("relation") or "") == "contains"
+                and str(rel.get("from") or "") == asset_id
+                and str(rel.get("to") or "") == knowledge_id
+            ):
+                explicit_contains_targets.setdefault(asset_id, set()).add(knowledge_id)
+
     written = 0
     relation_link_docs = 0
     dependency_link_docs = 0
-    relation_tag_docs = 0
+    containment_link_docs = 0
     for row, path in zip(rows, files, strict=True):
         current = path.read_text(encoding="utf-8")
         if current.startswith("---\n"):
@@ -138,10 +149,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
 
         related: list[str] = []
         relationship_added = False
-        row_relationships = row.get("relationships") or []
-        if any(isinstance(rel, dict) and rel.get("relation") for rel in row_relationships):
-            relation_tag_docs += 1
-        for rel in row_relationships:
+        for rel in row.get("relationships") or []:
             if not isinstance(rel, dict):
                 continue
             source = str(rel.get("from") or "")
@@ -160,13 +168,26 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
                     relationship_added = True
 
         dependency_added = False
+        containment_added = False
         if str(row.get("knowledge_kind") or "") == "discovery":
+            asset_id = str(row.get("parent_asset_id") or "")
             composition = row.get("composition") if isinstance(row.get("composition"), dict) else {}
             for dependency in composition.get("depends_on") or []:
                 filename = asset_to_preferred_file.get(str(dependency))
                 if filename and filename != path.name:
                     related.append(filename)
                     dependency_added = True
+
+            # The producer emits one explicit `asset contains knowledge-unit`
+            # relationship per unit. Represent those directed relationships in
+            # the existing MVS graph by making the Asset discovery document link
+            # to each explicitly-contained unit document. No relation is inferred
+            # when the producer did not emit a contains edge.
+            for target_id in sorted(explicit_contains_targets.get(asset_id, set())):
+                filename = unit_to_file.get(target_id)
+                if filename and filename != path.name:
+                    related.append(filename)
+                    containment_added = True
 
         related = list(dict.fromkeys(related))
         path.write_text(
@@ -177,11 +198,13 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         written += 1
         relation_link_docs += int(relationship_added)
         dependency_link_docs += int(dependency_added)
+        containment_link_docs += int(containment_added)
 
     print(
         f"GACE_MODULECATALOG_CORPUS_ENRICH=PASS RECORDS={written} "
-        f"TAG={BASE_TAG} RELATION_TAG_DOCS={relation_tag_docs} "
-        f"RELATION_LINK_DOCS={relation_link_docs} DEPENDENCY_LINK_DOCS={dependency_link_docs}"
+        f"TAG={BASE_TAG} RELATION_LINK_DOCS={relation_link_docs} "
+        f"DEPENDENCY_LINK_DOCS={dependency_link_docs} "
+        f"CONTAINMENT_LINK_DOCS={containment_link_docs}"
     )
     return written
 
