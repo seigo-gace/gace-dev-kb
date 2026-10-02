@@ -22,25 +22,74 @@ exit 0
 Set-Content -Path (Join-Path $Scripts 'process-modulecatalog-inbox-windows.ps1') -Value $processor -Encoding UTF8
 
 try {
+    $Watcher = Join-Path $Scripts 'watch-modulecatalog-kb-inbox-windows.ps1'
     & (Get-Process -Id $PID).Path `
         -NoProfile `
         -ExecutionPolicy Bypass `
-        -File (Join-Path $Scripts 'watch-modulecatalog-kb-inbox-windows.ps1') `
+        -File $Watcher `
         -Root $Root `
         -Python $Python `
         -PollSeconds 1 `
+        -HeartbeatSeconds 60 `
         -Once
     if ($LASTEXITCODE -ne 0) { throw "RECEIVER_SERVICE_ONCE_FAILED=$LASTEXITCODE" }
     if (-not (Test-Path $Marker)) { throw "RECEIVER_SERVICE_PROCESSOR_NOT_CALLED=$Marker" }
 
-    $log = Join-Path $Root 'data\knowledge-intake\modulecatalog\receiver-service.jsonl'
+    $intake = Join-Path $Root 'data\knowledge-intake\modulecatalog'
+    $log = Join-Path $intake 'receiver-service.jsonl'
+    $lock = Join-Path $intake 'receiver-service.lock'
     if (-not (Test-Path $log)) { throw "RECEIVER_SERVICE_LOG_MISSING=$log" }
+    if (Test-Path $lock) { throw "RECEIVER_SERVICE_LOCK_NOT_RELEASED=$lock" }
     $events = @(Get-Content $log | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
     if (@($events | Where-Object { $_.status -eq 'STARTED' }).Count -ne 1) { throw 'RECEIVER_SERVICE_STARTED_EVENT_MISSING' }
     if (@($events | Where-Object { $_.status -eq 'POLL_PASS' }).Count -ne 1) { throw 'RECEIVER_SERVICE_POLL_PASS_EVENT_MISSING' }
     if (@($events | Where-Object { $_.status -eq 'STOPPED' }).Count -ne 1) { throw 'RECEIVER_SERVICE_STOPPED_EVENT_MISSING' }
 
-    Write-Host 'MODULECATALOG_RECEIVER_SERVICE_TEST=PASS'
+    # A second receiver must fail closed while another instance owns the service lock.
+    $held = [System.IO.File]::Open(
+        $lock,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $busyOutput = (& (Get-Process -Id $PID).Path `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $Watcher `
+            -Root $Root `
+            -Python $Python `
+            -PollSeconds 1 `
+            -Once 2>&1 | Out-String)
+        $busyExit = $LASTEXITCODE
+        if ($busyExit -eq 0) { throw 'RECEIVER_SERVICE_SINGLETON_DID_NOT_FAIL' }
+        if ($busyOutput -notmatch 'MODULECATALOG_RECEIVER_SERVICE_BUSY') {
+            throw "RECEIVER_SERVICE_BUSY_MARKER_MISSING=$busyOutput"
+        }
+    }
+    finally {
+        $held.Dispose()
+        Remove-Item $lock -Force -ErrorAction SilentlyContinue
+    }
+
+    # Rotation must be bounded and must preserve the current event stream.
+    [System.IO.File]::WriteAllText($log, ('x' * 2048), [System.Text.UTF8Encoding]::new($false))
+    & (Get-Process -Id $PID).Path `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $Watcher `
+        -Root $Root `
+        -Python $Python `
+        -PollSeconds 1 `
+        -MaxLogBytes 1024 `
+        -MaxLogFiles 2 `
+        -Once
+    if ($LASTEXITCODE -ne 0) { throw "RECEIVER_SERVICE_ROTATION_RUN_FAILED=$LASTEXITCODE" }
+    if (-not (Test-Path "$log.1")) { throw 'RECEIVER_SERVICE_ROTATED_LOG_MISSING' }
+    if (-not (Test-Path $log)) { throw 'RECEIVER_SERVICE_CURRENT_LOG_MISSING_AFTER_ROTATION' }
+    if ((Get-Item "$log.1").Length -lt 2048) { throw 'RECEIVER_SERVICE_ROTATED_LOG_TRUNCATED' }
+
+    Write-Host 'MODULECATALOG_RECEIVER_SERVICE_TEST=PASS SINGLETON=PASS ROTATION=PASS'
 }
 finally {
     Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
