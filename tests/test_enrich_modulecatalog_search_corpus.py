@@ -32,6 +32,8 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
         kind: str = "discovery",
         depends_on=None,
         relationships=None,
+        cases=None,
+        source_paths=None,
     ):
         return {
             "knowledge_id": f"{asset_id}::{suffix}",
@@ -47,6 +49,8 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
             "lifecycle": {"status": "active"},
             "composition": {"depends_on": depends_on or []},
             "relationships": relationships or [],
+            "cases": cases or [],
+            "source_paths": source_paths or [],
         }
 
     def write_fixture(self, rows):
@@ -92,6 +96,7 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
 
         source = (self.corpus / "0001-asset-a-discovery.md").read_text(encoding="utf-8")
         self.assertIn('"relation-related_to"', source)
+        self.assertIn('"asset-a::related::asset-b"', source)
         self.assertIn("related:\n  - \"0002-asset-b-discovery.md\"", source)
 
     def test_explicit_contains_projects_discovery_to_child_document(self):
@@ -138,8 +143,54 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
         target = (self.corpus / "0002-asset-b-discovery.md").read_text(encoding="utf-8")
         self.assertIn('"relation-alternative_to"', source)
         self.assertIn('"relationship-id-asset-a-alternative_to-asset-b"', source)
+        self.assertIn('"asset-a::alternative_to::asset-b"', source)
         self.assertIn("related:\n  - \"0002-asset-b-discovery.md\"", source)
         self.assertIn('"relation-alternative_to"', target)
+
+    def test_full_case_sidecar_projects_raw_case_id_to_matching_test_unit(self):
+        rows = [
+            self.row("asset-a"),
+            self.row(
+                "asset-a",
+                suffix="normal-test",
+                kind="test_case",
+                source_paths=["tests/normal/example.test.cjs"],
+            ),
+        ]
+        self.write_fixture(rows)
+        case = {
+            "schema_version": 1,
+            "case_id": "asset-a::case::normal::example.test.cjs",
+            "parent_asset_id": "asset-a",
+            "case_type": "normal",
+            "result": "PASS",
+            "source_test": "tests/normal/example.test.cjs",
+        }
+        (self.root / "cases.jsonl").write_text(json.dumps(case) + "\n", encoding="utf-8")
+
+        self.assertEqual(enrich(self.metadata, self.corpus), 2)
+        discovery = (self.corpus / "0001-asset-a-discovery.md").read_text(encoding="utf-8")
+        test_doc = (self.corpus / "0002-asset-a-test_case.md").read_text(encoding="utf-8")
+        self.assertNotIn(case["case_id"], discovery)
+        self.assertIn(case["case_id"], test_doc)
+        self.assertIn('"case-type-normal"', test_doc)
+        self.assertIn('"case-result-pass"', test_doc)
+
+    def test_unmatched_case_falls_back_to_parent_discovery_document(self):
+        rows = [self.row("asset-a")]
+        self.write_fixture(rows)
+        case = {
+            "schema_version": 1,
+            "case_id": "asset-a::case::user::external",
+            "parent_asset_id": "asset-a",
+            "case_type": "user",
+            "result": "PASS",
+            "source_test": "tests/user/not-a-unit.test.cjs",
+        }
+        (self.root / "cases.jsonl").write_text(json.dumps(case) + "\n", encoding="utf-8")
+        self.assertEqual(enrich(self.metadata, self.corpus), 1)
+        discovery = (self.corpus / "0001-asset-a-discovery.md").read_text(encoding="utf-8")
+        self.assertIn(case["case_id"], discovery)
 
     def test_does_not_infer_contains_without_producer_relationship(self):
         rows = [
