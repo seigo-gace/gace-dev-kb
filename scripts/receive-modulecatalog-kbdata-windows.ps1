@@ -8,13 +8,15 @@ $ErrorActionPreference = 'Stop'
 $Repo = Join-Path $Root 'repo'
 $Acceptor = Join-Path $Repo 'scripts\accept_modulecatalog_delivery.py'
 $Activator = Join-Path $Repo 'scripts\activate-modulecatalog-accepted-windows.ps1'
+$Recovery = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
 $ManifestPath = Join-Path $DeliveryRoot 'manifest.json'
-foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$DeliveryRoot,$ManifestPath)) {
+foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$Recovery,$DeliveryRoot,$ManifestPath)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
+$ActivationJournal = Join-Path $IntakeRoot 'activation-transaction.json'
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 $LockPath = Join-Path $IntakeRoot 'receive.lock'
 $LockStream = $null
@@ -29,6 +31,15 @@ try {
     }
     catch {
         throw "MODULECATALOG_RECEIVER_BUSY=$LockPath"
+    }
+
+    # Resolve any interrupted previous cutover before trusting receipts/markers.
+    # This is intentionally before the idempotent ACTIVE shortcut.
+    if (Test-Path $ActivationJournal) {
+        Write-Host '=== KB RECEIVE: RECOVER INTERRUPTED ACTIVATION ==='
+        & $Recovery -Root $Root -JournalPath $ActivationJournal
+        if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_ACTIVATION_RECOVERY_FAILED=$LASTEXITCODE" }
+        if (Test-Path $ActivationJournal) { throw "ACTIVATION_JOURNAL_STILL_PRESENT=$ActivationJournal" }
     }
 
     $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
@@ -58,6 +69,7 @@ try {
         if ([string]$Current.catalogCommit -ne $CatalogCommit) {
             throw "PREVIOUSLY_ACTIVE_DELIVERY_IS_NOT_CURRENT incoming=$CatalogCommit current=$($Current.catalogCommit)"
         }
+        if (Test-Path $ActivationJournal) { throw "ACTIVE_WITH_UNRESOLVED_JOURNAL=$ActivationJournal" }
         Write-Host "GACE_MODULECATALOG_RECEIVE=PASS IDEMPOTENT=YES STATUS=ACTIVE COMMIT=$CatalogCommit"
         Write-Host "RECEIPT=$ReceiptPath"
         return
@@ -73,6 +85,7 @@ try {
     if (-not (Test-Path $ActivationMarker)) { throw "FINAL_CURRENT_MARKER_MISSING=$ActivationMarker" }
     $FinalCurrent = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
     if ([string]$FinalCurrent.status -ne 'ACTIVE' -or [string]$FinalCurrent.catalogCommit -ne $CatalogCommit) { throw 'FINAL_CURRENT_MARKER_MISMATCH' }
+    if (Test-Path $ActivationJournal) { throw "FINAL_ACTIVATION_JOURNAL_PRESENT=$ActivationJournal" }
     Write-Host "GACE_MODULECATALOG_RECEIVE=PASS STATUS=ACTIVE COMMIT=$CatalogCommit ASSETS=$($FinalReceipt.assetCount) RECORDS=$($FinalReceipt.knowledgeUnitCount)"
     Write-Host "RECEIPT=$ReceiptPath"
 }
