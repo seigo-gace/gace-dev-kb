@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from enrich_modulecatalog_search_corpus import enrich as enrich_search_corpus
 from import_modulecatalog_reusable_export import FORMAT, CATALOG_REPOSITORY, import_export
 
 
@@ -196,14 +197,21 @@ def accept_delivery(
         )
         if imported_asset_count != asset_count or len(records) != record_count or len(metadata) != record_count:
             raise RuntimeError("DELIVERY_IMPORT_CARDINALITY_MISMATCH")
+
+        records_path = projection / "knowledge-records.jsonl"
+        metadata_path = projection / "knowledge-metadata.jsonl"
+        enriched_count = enrich_search_corpus(metadata_path, corpus)
+        if enriched_count != record_count:
+            raise RuntimeError(
+                f"DELIVERY_CORPUS_ENRICH_COUNT_MISMATCH expected={record_count} actual={enriched_count}"
+            )
+
         corpus_count = len(list(corpus.glob("*.md")))
         if corpus_count != record_count:
             raise RuntimeError(
                 f"DELIVERY_CORPUS_COUNT_MISMATCH expected={record_count} actual={corpus_count}"
             )
 
-        records_path = projection / "knowledge-records.jsonl"
-        metadata_path = projection / "knowledge-metadata.jsonl"
         state = {
             "schemaVersion": 1,
             "status": "ACCEPTED",
@@ -214,6 +222,7 @@ def accept_delivery(
             "relationshipCount": relationship_count,
             "caseCount": case_count,
             "corpusCount": corpus_count,
+            "corpusRuntimeEnrichment": "mvs-4.1.14-frontmatter-v1",
             "deliveryManifestSha256": manifest_hash,
             "knowledgeRecordsSha256": sha256_file(records_path),
             "knowledgeMetadataSha256": sha256_file(metadata_path),
