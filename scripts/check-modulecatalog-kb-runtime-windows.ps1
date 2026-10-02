@@ -12,17 +12,20 @@ $CurrentSearch = Join-Path $Root 'data\knowledge-search'
 $CurrentRecords = Join-Path $CurrentSearch 'records'
 $FormalJsonl = Join-Path $Root 'data\knowledge-records\formal-kb.jsonl'
 $ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
+$ActivationJournal = Join-Path $Root 'data\knowledge-intake\modulecatalog\activation-transaction.json'
 $CurrentReusable = Join-Path $Root 'data\knowledge-sources\accepted\modulecatalog-reusable-current'
 $ReusableRecords = Join-Path $CurrentReusable 'knowledge-records.jsonl'
 $ReusableMetadata = Join-Path $CurrentReusable 'knowledge-metadata.jsonl'
+$ReusableCorpus = Join-Path $CurrentReusable 'records'
 $RuntimeState = Join-Path $CurrentReusable 'runtime-state.json'
 $HistoryProbe = Join-Path $Repo 'tests\mcp_knowledge_client_e2e.py'
 $ReusableProbe = Join-Path $Repo 'tests\mcp_reusable_asset_e2e.py'
 $ReceiptsRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog\receipts'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$CurrentSearch,$CurrentRecords,$FormalJsonl,$ActivationMarker,$CurrentReusable,$ReusableRecords,$ReusableMetadata,$RuntimeState,$ReceiptsRoot)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$CurrentSearch,$CurrentRecords,$FormalJsonl,$ActivationMarker,$CurrentReusable,$ReusableRecords,$ReusableMetadata,$ReusableCorpus,$RuntimeState,$ReceiptsRoot)) {
     if (-not (Test-Path $path)) { throw "RUNTIME_REQUIRED_PATH_MISSING=$path" }
 }
+if (Test-Path $ActivationJournal) { throw "RUNTIME_UNRESOLVED_ACTIVATION_JOURNAL=$ActivationJournal" }
 
 function Get-Sha256 { param([string]$Path) return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash }
 function Invoke-MvsStatus {
@@ -81,11 +84,21 @@ $FormalCount = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() }).Count
 $SearchCorpusCount = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File).Count
 $ReusableCount = @(Get-Content $ReusableRecords | Where-Object { $_.Trim() }).Count
 $MetadataCount = @(Get-Content $ReusableMetadata | Where-Object { $_.Trim() }).Count
+$ReusableCorpusFiles = @(Get-ChildItem $ReusableCorpus -Filter '*.md' -File)
 if ($FormalCount -ne $ExpectedTotal -or $SearchCorpusCount -ne $ExpectedTotal) {
     throw "RUNTIME_TOTAL_COUNT_MISMATCH expected=$ExpectedTotal formal=$FormalCount corpus=$SearchCorpusCount"
 }
-if ($ReusableCount -ne $ExpectedReusable -or $MetadataCount -ne $ExpectedReusable) {
-    throw "RUNTIME_REUSABLE_COUNT_MISMATCH expected=$ExpectedReusable records=$ReusableCount metadata=$MetadataCount"
+if ($ReusableCount -ne $ExpectedReusable -or $MetadataCount -ne $ExpectedReusable -or $ReusableCorpusFiles.Count -ne $ExpectedReusable) {
+    throw "RUNTIME_REUSABLE_COUNT_MISMATCH expected=$ExpectedReusable records=$ReusableCount metadata=$MetadataCount corpus=$($ReusableCorpusFiles.Count)"
+}
+foreach ($file in $ReusableCorpusFiles) {
+    $head = Get-Content $file.FullName -TotalCount 16 -Raw
+    if (-not $head.StartsWith("---`n") -and -not $head.StartsWith("---`r`n")) {
+        throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$($file.Name)"
+    }
+    if ($head -notmatch 'gace-reusable-asset') {
+        throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)"
+    }
 }
 
 $Status = Invoke-MvsStatus
@@ -101,7 +114,7 @@ if ($Deep) {
     if ($LASTEXITCODE -ne 0) { throw "RUNTIME_DEEP_HISTORY_MCP_FAILED=$LASTEXITCODE" }
     & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $CurrentSearch --metadata $ReusableMetadata --expected-count $ExpectedReusable --timeout 180
     if ($LASTEXITCODE -ne 0) { throw "RUNTIME_DEEP_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
-    Write-Host "GACE_MODULECATALOG_RUNTIME_DEEP=PASS COMMIT=$Commit RECORDS=$ExpectedReusable"
+    Write-Host "GACE_MODULECATALOG_RUNTIME_DEEP=PASS COMMIT=$Commit RECORDS=$ExpectedReusable MODES=BM25,VECTOR,HYBRID KG=PASS"
 }
 
-Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable TOTAL=$ExpectedTotal"
+Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable TOTAL=$ExpectedTotal JOURNAL=NONE KG_READY=YES"
