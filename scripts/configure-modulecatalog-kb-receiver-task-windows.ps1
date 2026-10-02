@@ -5,6 +5,7 @@ param(
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
+    [ValidateRange(0,604800)][int]$DeepRuntimeHealthSeconds = 21600,
     [ValidateRange(0,604800)][int]$RetentionSeconds = 3600,
     [ValidateRange(1,50)][int]$KeepActivationBackups = 3,
     [ValidateRange(1,500)][int]$KeepProcessedDeliveries = 20,
@@ -17,6 +18,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Test/maintenance callers that explicitly disable ordinary health but do not
+# mention deep health are disabling health as a whole. An explicit
+# -DeepRuntimeHealthSeconds value still wins when deep-only operation is wanted.
+if ($RuntimeHealthSeconds -eq 0 -and -not $PSBoundParameters.ContainsKey('DeepRuntimeHealthSeconds')) {
+    $DeepRuntimeHealthSeconds = 0
+}
 
 if (-not $env:WINDIR) { throw 'WINDOWS_REQUIRED' }
 foreach ($command in @(
@@ -75,6 +83,7 @@ $arguments = @(
     '-RetryBackoffSeconds',[string]$RetryBackoffSeconds,
     '-HeartbeatSeconds',[string]$HeartbeatSeconds,
     '-RuntimeHealthSeconds',[string]$RuntimeHealthSeconds,
+    '-DeepRuntimeHealthSeconds',[string]$DeepRuntimeHealthSeconds,
     '-RetentionSeconds',[string]$RetentionSeconds,
     '-KeepActivationBackups',[string]$KeepActivationBackups,
     '-KeepProcessedDeliveries',[string]$KeepProcessedDeliveries,
@@ -115,7 +124,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'Consumes transported ModuleCatalog KBData, activates it through the existing G-ACE KB runtime, continuously verifies active runtime health, and bounds operational backup/archive retention.' `
+    -Description 'Consumes transported ModuleCatalog KBData, activates it through the existing G-ACE KB runtime, continuously verifies active runtime health including periodic deep MCP retrieval, and bounds operational backup/archive retention.' `
     -Force | Out-Null
 
 $registered = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
@@ -177,7 +186,7 @@ if (-not $startupVerified) {
     throw "RECEIVER_TASK_STARTUP_HEALTH_NOT_VERIFIED STATE=$($task.State) LOCK=$ServiceLockPath LOG=$ServiceLogPath"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED PRINCIPAL_SID=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RETENTION_SECONDS=$RetentionSeconds KEEP_BACKUPS=$KeepActivationBackups KEEP_PROCESSED=$KeepProcessedDeliveries KEEP_FAILED=$KeepFailedDeliveries KEEP_ACCEPTED=$KeepAcceptedSnapshots RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED PRINCIPAL_SID=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds DEEP_RUNTIME_HEALTH_SECONDS=$DeepRuntimeHealthSeconds RETENTION_SECONDS=$RetentionSeconds KEEP_BACKUPS=$KeepActivationBackups KEEP_PROCESSED=$KeepProcessedDeliveries KEEP_FAILED=$KeepFailedDeliveries KEEP_ACCEPTED=$KeepAcceptedSnapshots RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
 Write-Host "SERVICE_LOG=$ServiceLogPath"
