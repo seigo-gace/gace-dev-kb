@@ -11,6 +11,7 @@ $RuntimePython = Join-Path $Root 'runtime\mcp-vector-search\Scripts\python.exe'
 $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
 $SnapshotBuilder = Join-Path $Repo 'scripts\replace_modulecatalog_reusable_snapshot.py'
 $SafetyPatch = Join-Path $Repo 'scripts\patch-mvs-windows-trial-safety.ps1'
+$RecoveryScript = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
 $HistoryProbe = Join-Path $Repo 'tests\mcp_knowledge_client_e2e.py'
 $SkillProbe = Join-Path $Repo 'tests\mcp_verified_skill_trial_e2e.py'
 $ReusableProbe = Join-Path $Repo 'tests\mcp_reusable_asset_e2e.py'
@@ -33,10 +34,11 @@ $OldSkillRecords = Join-Path $AcceptedSources 'debugai-code-repair-verification-
 $CurrentReusableSnapshot = Join-Path $AcceptedSources 'modulecatalog-reusable-current'
 $StagingReusableSnapshot = Join-Path $AcceptedSources 'modulecatalog-reusable-staging'
 $ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
+$ActivationJournal = Join-Path $Root 'data\knowledge-intake\modulecatalog\activation-transaction.json'
 $ReusableCorpusPrefix = 'accepted-modulecatalog-reusable-'
 $ModuleCatalogRepository = 'seigo-gace/modular-catalog'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -101,6 +103,13 @@ function Assert-IndexHealthy {
     if ($Output -match 'BM25 index building failed') { throw "${Stage}_BM25_BUILD_WARNING_PRESENT" }
     if ($Output -match 'Hybrid search will fall back to vector-only mode') { throw "${Stage}_VECTOR_ONLY_FALLBACK_PRESENT" }
     if ($Output -match 'cannot find context for ''fork''') { throw "${Stage}_WINDOWS_FORK_CONTEXT_ERROR_PRESENT" }
+}
+
+# A hard process/PC interruption may leave a prepared cutover journal. Resolve it
+# before reading current counts or constructing a new staging runtime.
+if (Test-Path $ActivationJournal) {
+    Write-Host '=== RECOVER INTERRUPTED ACTIVATION ==='
+    & $RecoveryScript -Root $Root -JournalPath $ActivationJournal
 }
 
 $State = Get-Content $AcceptedState -Raw | ConvertFrom-Json
@@ -199,6 +208,30 @@ Copy-Item $ReceiptPath $BackupReceipt -Force
 if ($HadActivationMarker) { Copy-Item $ActivationMarker $BackupActivationMarker -Force }
 $hadCurrentReusable = Test-Path $CurrentReusableSnapshot
 $searchMoved = $false; $reusableMoved = $false
+
+$Journal = [ordered]@{
+    schemaVersion = 1
+    status = 'PREPARED'
+    targetCommit = $CatalogCommit
+    createdAtUtc = [DateTime]::UtcNow.ToString('o')
+    currentSearch = $CurrentSearch
+    backupSearch = $BackupSearch
+    formalJsonl = $FormalJsonl
+    backupFormal = $BackupFormal
+    currentReusable = $CurrentReusableSnapshot
+    backupReusable = $BackupReusable
+    activationMarker = $ActivationMarker
+    backupActivationMarker = $BackupActivationMarker
+    receiptPath = $ReceiptPath
+    backupReceipt = $BackupReceipt
+    stagingSearch = $StagingSearch
+    stagingReusable = $StagingReusableSnapshot
+    nextFormal = $NextFormal
+    hadCurrentReusable = $hadCurrentReusable
+    hadActivationMarker = $HadActivationMarker
+}
+Write-JsonAtomic -Value $Journal -Path $ActivationJournal
+
 try {
     Move-Item $CurrentSearch $BackupSearch; $searchMoved = $true
     Move-Item $StagingSearch $CurrentSearch
@@ -259,10 +292,12 @@ catch {
     }
     if (Test-Path $BackupReceipt) { Copy-Item $BackupReceipt $ReceiptPath -Force -ErrorAction SilentlyContinue }
     Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
+    Remove-Item $ActivationJournal -Force -ErrorAction SilentlyContinue
     throw $failure
 }
 
 Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
+Remove-Item $ActivationJournal -Force -ErrorAction SilentlyContinue
 Write-Host "GACE_MODULECATALOG_RUNTIME_ACTIVATION=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount REUSABLE=$ExpectedRecordCount TOTAL=$ExpectedTotal"
 Write-Host "GACE_MODULECATALOG_POST_CUTOVER_MCP=PASS"
 Write-Host "RECEIPT=$ReceiptPath"
