@@ -36,8 +36,11 @@ $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $StopPath = Join-Path $IntakeRoot 'receiver.stop'
 $ServiceLockPath = Join-Path $IntakeRoot 'receiver-service.lock'
 $ServiceLogPath = Join-Path $IntakeRoot 'receiver-service.jsonl'
-$CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$WindowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$CurrentIdentity = $WindowsIdentity.Name
+$CurrentSid = if ($null -ne $WindowsIdentity.User) { $WindowsIdentity.User.Value } else { $null }
 if (-not $CurrentIdentity) { throw 'CURRENT_WINDOWS_IDENTITY_MISSING' }
+if (-not $CurrentSid) { throw 'CURRENT_WINDOWS_SID_MISSING' }
 
 if ($Uninstall) {
     Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -120,8 +123,15 @@ if ([string]$registeredAction.Arguments -ne $arguments) {
 if ([string]$registeredAction.WorkingDirectory -ine $Repo) {
     throw "RECEIVER_TASK_WORKDIR_MISMATCH expected=$Repo actual=$($registeredAction.WorkingDirectory)"
 }
-if ([string]$registered.Principal.UserId -ine $CurrentIdentity) {
-    throw "RECEIVER_TASK_PRINCIPAL_MISMATCH expected=$CurrentIdentity actual=$($registered.Principal.UserId)"
+try {
+    $registeredAccount = New-Object System.Security.Principal.NTAccount([string]$registered.Principal.UserId)
+    $registeredSid = $registeredAccount.Translate([System.Security.Principal.SecurityIdentifier]).Value
+}
+catch {
+    throw "RECEIVER_TASK_PRINCIPAL_SID_RESOLUTION_FAILED user=$($registered.Principal.UserId) error=$($_.Exception.Message)"
+}
+if ($registeredSid -ne $CurrentSid) {
+    throw "RECEIVER_TASK_PRINCIPAL_MISMATCH expectedSid=$CurrentSid actualSid=$registeredSid storedUser=$($registered.Principal.UserId) currentUser=$CurrentIdentity"
 }
 
 $StartRequestedUtc = [DateTime]::UtcNow
@@ -162,7 +172,7 @@ if (-not $startupVerified) {
     throw "RECEIVER_TASK_STARTUP_HEALTH_NOT_VERIFIED STATE=$($task.State) LOCK=$ServiceLockPath LOG=$ServiceLogPath"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED PRINCIPAL_SID=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
 Write-Host "SERVICE_LOG=$ServiceLogPath"
