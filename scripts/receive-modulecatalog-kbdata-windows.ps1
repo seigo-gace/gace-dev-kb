@@ -26,6 +26,8 @@ New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 $LockPath = Join-Path $IntakeRoot 'receive.lock'
 $LockStream = $null
 $OwnsReceiveLock = $false
+$ReceiverExitCode = 0
+$ReceiverFailure = $null
 try {
     try {
         $LockStream = [System.IO.File]::Open(
@@ -106,7 +108,15 @@ try {
     Write-Host "GACE_MODULECATALOG_RECEIVE=PASS STATUS=ACTIVE HEALTH=PASS COMMIT=$CatalogCommit ASSETS=$($FinalReceipt.assetCount) RECORDS=$($FinalReceipt.knowledgeUnitCount)"
     Write-Host "RECEIPT=$ReceiptPath"
 }
+catch {
+    $ReceiverExitCode = 1
+    $ReceiverFailure = $_
+}
 finally {
     if ($null -ne $LockStream) { $LockStream.Dispose(); $LockStream = $null }
     if ($OwnsReceiveLock) { Remove-Item $LockPath -Force -ErrorAction SilentlyContinue }
+}
+if ($ReceiverExitCode -ne 0) {
+    Write-Error -ErrorRecord $ReceiverFailure
+    exit $ReceiverExitCode
 }
