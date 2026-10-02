@@ -50,7 +50,7 @@ Move-Item $delivery.FullName $processingPath
 try {
     Write-Host "=== PROCESS DELIVERY: $($delivery.Name) ==="
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Receiver -Root $Root -Python $Python -DeliveryRoot $processingPath
-    if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_INBOX_DELIVERY_FAILED=$processingPath:$LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_INBOX_DELIVERY_FAILED=${processingPath}:$LASTEXITCODE" }
 
     $manifest = Get-Content (Join-Path $processingPath 'manifest.json') -Raw | ConvertFrom-Json
     $commit = [string]$manifest.catalog.commit
