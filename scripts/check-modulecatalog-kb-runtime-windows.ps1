@@ -25,6 +25,7 @@ $ReusableCorpus = Join-Path $CurrentReusable 'records'
 $RuntimeState = Join-Path $CurrentReusable 'runtime-state.json'
 $HistoryProbe = Join-Path $Repo 'tests\mcp_knowledge_client_e2e.py'
 $ReusableProbe = Join-Path $Repo 'tests\mcp_reusable_asset_e2e.py'
+$RuntimeProjectionVerifier = Join-Path $Repo 'scripts\verify_modulecatalog_runtime_projection.py'
 $ReceiptsRoot = Join-Path $IntakeRoot 'receipts'
 
 function Get-Sha256 { param([string]$Path) return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash }
@@ -74,7 +75,7 @@ try {
         throw "RUNTIME_EXPECTED_RECEIVE_LOCK_MISSING=$ReceiveLockPath"
     }
 
-    foreach ($path in @($Repo,$RuntimePython,$Mvs,$CurrentSearch,$CurrentRecords,$FormalJsonl,$ActivationMarker,$CurrentReusable,$ReusableRecords,$ReusableMetadata,$ReusableRelationships,$ReusableCases,$ReusableCorpus,$RuntimeState,$ReceiptsRoot)) {
+    foreach ($path in @($Repo,$RuntimePython,$Mvs,$CurrentSearch,$CurrentRecords,$FormalJsonl,$ActivationMarker,$CurrentReusable,$ReusableRecords,$ReusableMetadata,$ReusableRelationships,$ReusableCases,$ReusableCorpus,$RuntimeState,$RuntimeProjectionVerifier,$ReceiptsRoot)) {
         if (-not (Test-Path $path)) { throw "RUNTIME_REQUIRED_PATH_MISSING=$path" }
     }
     if (Test-Path $ActivationJournal) { throw "RUNTIME_UNRESOLVED_ACTIVATION_JOURNAL=$ActivationJournal" }
@@ -130,6 +131,19 @@ try {
         if ($head -notmatch 'gace-reusable-asset') { throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)" }
     }
 
+    # The live MVS corpus is not an archive copy: filenames are commit-prefixed
+    # and frontmatter relation targets are rewritten at activation time. Rebuild
+    # that exact deterministic view from the accepted Current snapshot and require
+    # byte-for-byte equality so silent runtime Markdown drift is detected even
+    # when record counts and the MVS status command still look healthy.
+    $RuntimePrefix = "accepted-modulecatalog-reusable-$($Commit.Substring(0,12))-"
+    & $RuntimePython -B $RuntimeProjectionVerifier `
+        --source-corpus $ReusableCorpus `
+        --runtime-corpus $CurrentRecords `
+        --prefix $RuntimePrefix `
+        --expected-count $ExpectedReusable
+    if ($LASTEXITCODE -ne 0) { throw "RUNTIME_PROJECTION_INTEGRITY_FAILED=$LASTEXITCODE" }
+
     $Status = Invoke-MvsStatus
     if ($Status -notmatch "Indexed Files:\s+$ExpectedTotal/$ExpectedTotal") { throw "RUNTIME_INDEX_COUNT_MISMATCH expected=$ExpectedTotal" }
     if ($Status -match 'BM25 index building failed') { throw 'RUNTIME_BM25_WARNING_PRESENT' }
@@ -144,7 +158,7 @@ try {
         Write-Host "GACE_MODULECATALOG_RUNTIME_DEEP=PASS COMMIT=$Commit RECORDS=$ExpectedReusable MODES=BM25,VECTOR,HYBRID KG=PASS"
     }
 
-    Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable RELATIONSHIPS=$ExpectedRelationships CASES=$ExpectedCases TOTAL=$ExpectedTotal JOURNAL=NONE KG_READY=YES LOCK_MODE=$([string]::Join('', $(if ($AssumeReceiveLockHeld) {'INHERITED'} else {'OWNED'})))"
+    Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable RELATIONSHIPS=$ExpectedRelationships CASES=$ExpectedCases TOTAL=$ExpectedTotal JOURNAL=NONE KG_READY=YES RUNTIME_PROJECTION=PASS LOCK_MODE=$([string]::Join('', $(if ($AssumeReceiveLockHeld) {'INHERITED'} else {'OWNED'})))"
 }
 finally {
     if ($null -ne $HealthLock) { $HealthLock.Dispose(); $HealthLock = $null }
