@@ -69,7 +69,7 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
         target = (self.corpus / "0002-asset-b.md").read_text(encoding="utf-8")
         self.assertNotIn("depends-on-asset-a", target)
 
-    def test_cross_unit_relationship_projects_to_related_document(self):
+    def test_cross_unit_relationship_projects_to_tag_and_related_document(self):
         relationship = {
             "relationship_id": "asset-a::related::asset-b",
             "from": "asset-a::overview",
@@ -84,6 +84,7 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
         self.assertEqual(enrich(self.metadata, self.corpus), 2)
 
         source = (self.corpus / "0001-asset-a.md").read_text(encoding="utf-8")
+        self.assertIn('"relation-related_to"', source)
         self.assertIn("related:\n  - \"0002-asset-b.md\"", source)
 
 
