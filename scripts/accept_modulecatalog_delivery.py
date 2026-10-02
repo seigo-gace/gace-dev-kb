@@ -2,9 +2,9 @@
 """Accept a transported ModuleCatalog KB export at the G-ACE KB boundary.
 
 ModuleCatalog owns canonical reusable-asset creation, verification, search-ready
-KBData generation and transport. G-ACE KB starts at receipt: verify the transported
-bundle, build the local runtime projection, preserve structured relationship/case
-sidecars, and emit an acceptance receipt for activation/indexing.
+KBData generation and transport. G-ACE KB starts at receipt: verify every delivered
+byte against the producer manifests, build the local runtime projection, preserve
+structured relationship/case sidecars, and emit acceptance authority for activation.
 """
 from __future__ import annotations
 
@@ -69,9 +69,7 @@ def derive_counts(manifest: dict[str, Any]) -> tuple[str, int, int, int, int]:
         raise RuntimeError(
             f"DELIVERY_ASSET_COUNT_MISMATCH declared={asset_count} actual={len(assets)}"
         )
-    record_count = 0
-    relationship_count = 0
-    case_count = 0
+    record_count = relationship_count = case_count = 0
     for item in assets:
         if not isinstance(item, dict):
             raise RuntimeError("DELIVERY_ASSET_ENTRY_INVALID")
@@ -116,6 +114,109 @@ def aggregate_sidecar(
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
     return len(rows)
+
+
+def build_projection(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    projection: Path,
+    *,
+    commit: str,
+    asset_count: int,
+    record_count: int,
+    relationship_count: int,
+    case_count: int,
+) -> dict[str, Any]:
+    records, metadata, corpus, imported_asset_count = import_export(
+        delivery_root,
+        projection,
+        expected_catalog_commit=commit,
+        expected_asset_count=asset_count,
+        expected_record_count=record_count,
+    )
+    if imported_asset_count != asset_count or len(records) != record_count or len(metadata) != record_count:
+        raise RuntimeError("DELIVERY_IMPORT_CARDINALITY_MISMATCH")
+
+    records_path = projection / "knowledge-records.jsonl"
+    metadata_path = projection / "knowledge-metadata.jsonl"
+    relationships_path = projection / "relationships.jsonl"
+    cases_path = projection / "cases.jsonl"
+    aggregate_sidecar(
+        delivery_root,
+        manifest,
+        filename="relationships.jsonl",
+        expected_count=relationship_count,
+        output=relationships_path,
+    )
+    aggregate_sidecar(
+        delivery_root,
+        manifest,
+        filename="cases.jsonl",
+        expected_count=case_count,
+        output=cases_path,
+    )
+    enriched_count = enrich_search_corpus(metadata_path, corpus)
+    if enriched_count != record_count:
+        raise RuntimeError(
+            f"DELIVERY_CORPUS_ENRICH_COUNT_MISMATCH expected={record_count} actual={enriched_count}"
+        )
+    corpus_count = len(list(corpus.glob("*.md")))
+    if corpus_count != record_count:
+        raise RuntimeError(
+            f"DELIVERY_CORPUS_COUNT_MISMATCH expected={record_count} actual={corpus_count}"
+        )
+    return {
+        "records_hash": sha256_file(records_path),
+        "metadata_hash": sha256_file(metadata_path),
+        "relationships_hash": sha256_file(relationships_path),
+        "cases_hash": sha256_file(cases_path),
+        "corpus_count": corpus_count,
+    }
+
+
+def validate_replay_against_state(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    commit: str,
+    asset_count: int,
+    record_count: int,
+    relationship_count: int,
+    case_count: int,
+    temp_parent: Path,
+) -> None:
+    """Fully re-verify a repeated transport; never trust an old receipt alone."""
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{commit[:12]}.reverify-", dir=temp_parent))
+    try:
+        result = build_projection(
+            delivery_root,
+            manifest,
+            temp_dir / "projection",
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+        )
+        expected = {
+            "knowledgeRecordsSha256": result["records_hash"],
+            "knowledgeMetadataSha256": result["metadata_hash"],
+            "relationshipsSha256": result["relationships_hash"],
+            "casesSha256": result["cases_hash"],
+        }
+        for field, actual in expected.items():
+            if str(state.get(field) or "") != actual:
+                raise RuntimeError(
+                    f"IDEMPOTENT_DELIVERY_PROJECTION_MISMATCH field={field} "
+                    f"accepted={state.get(field)} replay={actual}"
+                )
+        if int(state.get("corpusCount", -1)) != int(result["corpus_count"]):
+            raise RuntimeError("IDEMPOTENT_DELIVERY_CORPUS_COUNT_MISMATCH")
+        if str(state.get("corpusRuntimeEnrichment") or "") != RUNTIME_ENRICHMENT:
+            raise RuntimeError("IDEMPOTENT_DELIVERY_ENRICHMENT_MISMATCH")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def receipt_payload(
@@ -167,11 +268,7 @@ def receipt_payload(
     return payload
 
 
-def accept_delivery(
-    delivery_root: Path,
-    accepted_root: Path,
-    receipt_path: Path,
-) -> dict[str, Any]:
+def accept_delivery(delivery_root: Path, accepted_root: Path, receipt_path: Path) -> dict[str, Any]:
     delivery_root = delivery_root.resolve()
     accepted_root = accepted_root.resolve()
     receipt_path = receipt_path.resolve()
@@ -182,31 +279,14 @@ def accept_delivery(
     manifest = read_json(manifest_path)
     commit, asset_count, record_count, relationship_count, case_count = derive_counts(manifest)
     manifest_hash = sha256_file(manifest_path)
-
-    prior_receipt: dict[str, Any] | None = None
-    if receipt_path.is_file():
-        prior_receipt = read_json(receipt_path)
-        if (
-            str(prior_receipt.get("catalogCommit") or "") == commit
-            and str(prior_receipt.get("deliveryManifestSha256") or "") == manifest_hash
-            and prior_receipt.get("status") == "ACTIVE"
-            and int(prior_receipt.get("projectionSchemaVersion", 0)) == PROJECTION_SCHEMA_VERSION
-        ):
-            print(
-                "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=YES "
-                f"STATUS=ACTIVE COMMIT={commit} ASSETS={asset_count} RECORDS={record_count}"
-            )
-            return prior_receipt
+    prior_receipt = read_json(receipt_path) if receipt_path.is_file() else None
 
     if accepted_root.exists():
         state_path = accepted_root / "state.json"
         if not state_path.is_file():
             raise RuntimeError(f"ACCEPTED_ROOT_CONFLICT_NO_STATE={accepted_root}")
         state = read_json(state_path)
-        if (
-            str(state.get("catalogCommit") or "") != commit
-            or str(state.get("deliveryManifestSha256") or "") != manifest_hash
-        ):
+        if str(state.get("catalogCommit") or "") != commit or str(state.get("deliveryManifestSha256") or "") != manifest_hash:
             raise RuntimeError(f"ACCEPTED_ROOT_CONFLICT={accepted_root}")
         if int(state.get("projectionSchemaVersion", 0)) != PROJECTION_SCHEMA_VERSION:
             raise RuntimeError(
@@ -221,6 +301,21 @@ def accept_delivery(
         ):
             if not (accepted_root / rel).is_file():
                 raise RuntimeError(f"ACCEPTED_PROJECTION_FILE_MISSING={accepted_root / rel}")
+
+        # Critical replay rule: a matching top-level manifest and prior ACTIVE
+        # receipt do not prove the newly transported bundle is intact. Re-run the
+        # complete producer-manifest/hash/provenance/import path on every replay.
+        validate_replay_against_state(
+            delivery_root,
+            manifest,
+            state,
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+            temp_parent=accepted_root.parent,
+        )
         receipt = receipt_payload(
             status="ACCEPTED",
             commit=commit,
@@ -239,56 +334,25 @@ def accept_delivery(
         )
         write_json_atomic(receipt_path, receipt)
         print(
-            "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=YES "
+            "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=YES REVERIFIED=YES "
             f"STATUS={receipt['status']} COMMIT={commit} ASSETS={asset_count} RECORDS={record_count}"
         )
         return receipt
 
     accepted_root.parent.mkdir(parents=True, exist_ok=True)
-    temp_parent = accepted_root.parent
-    temp_dir = Path(tempfile.mkdtemp(prefix=f".{accepted_root.name}.accept-", dir=temp_parent))
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{accepted_root.name}.accept-", dir=accepted_root.parent))
     try:
         projection = temp_dir / "projection"
-        records, metadata, corpus, imported_asset_count = import_export(
+        result = build_projection(
             delivery_root,
+            manifest,
             projection,
-            expected_catalog_commit=commit,
-            expected_asset_count=asset_count,
-            expected_record_count=record_count,
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
         )
-        if imported_asset_count != asset_count or len(records) != record_count or len(metadata) != record_count:
-            raise RuntimeError("DELIVERY_IMPORT_CARDINALITY_MISMATCH")
-
-        records_path = projection / "knowledge-records.jsonl"
-        metadata_path = projection / "knowledge-metadata.jsonl"
-        relationships_path = projection / "relationships.jsonl"
-        cases_path = projection / "cases.jsonl"
-        aggregate_sidecar(
-            delivery_root,
-            manifest,
-            filename="relationships.jsonl",
-            expected_count=relationship_count,
-            output=relationships_path,
-        )
-        aggregate_sidecar(
-            delivery_root,
-            manifest,
-            filename="cases.jsonl",
-            expected_count=case_count,
-            output=cases_path,
-        )
-
-        enriched_count = enrich_search_corpus(metadata_path, corpus)
-        if enriched_count != record_count:
-            raise RuntimeError(
-                f"DELIVERY_CORPUS_ENRICH_COUNT_MISMATCH expected={record_count} actual={enriched_count}"
-            )
-        corpus_count = len(list(corpus.glob("*.md")))
-        if corpus_count != record_count:
-            raise RuntimeError(
-                f"DELIVERY_CORPUS_COUNT_MISMATCH expected={record_count} actual={corpus_count}"
-            )
-
         state = {
             "schemaVersion": 1,
             "projectionSchemaVersion": PROJECTION_SCHEMA_VERSION,
@@ -299,13 +363,13 @@ def accept_delivery(
             "knowledgeUnitCount": record_count,
             "relationshipCount": relationship_count,
             "caseCount": case_count,
-            "corpusCount": corpus_count,
+            "corpusCount": result["corpus_count"],
             "corpusRuntimeEnrichment": RUNTIME_ENRICHMENT,
             "deliveryManifestSha256": manifest_hash,
-            "knowledgeRecordsSha256": sha256_file(records_path),
-            "knowledgeMetadataSha256": sha256_file(metadata_path),
-            "relationshipsSha256": sha256_file(relationships_path),
-            "casesSha256": sha256_file(cases_path),
+            "knowledgeRecordsSha256": result["records_hash"],
+            "knowledgeMetadataSha256": result["metadata_hash"],
+            "relationshipsSha256": result["relationships_hash"],
+            "casesSha256": result["cases_hash"],
             "acceptedAtUtc": datetime.now(timezone.utc).isoformat(),
         }
         write_json_atomic(temp_dir / "state.json", state)
