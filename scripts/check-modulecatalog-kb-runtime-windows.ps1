@@ -1,6 +1,7 @@
 param(
     [string]$Root = 'F:\G-ACE-KB',
-    [switch]$Deep
+    [switch]$Deep,
+    [switch]$AssumeReceiveLockHeld
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,17 +54,24 @@ function Invoke-MvsStatus {
 
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 $HealthLock = $null
+$OwnsHealthLock = $false
 try {
-    try {
-        $HealthLock = [System.IO.File]::Open(
-            $ReceiveLockPath,
-            [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::None
-        )
+    if (-not $AssumeReceiveLockHeld) {
+        try {
+            $HealthLock = [System.IO.File]::Open(
+                $ReceiveLockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            $OwnsHealthLock = $true
+        }
+        catch {
+            throw "RUNTIME_RECEIVER_BUSY=$ReceiveLockPath"
+        }
     }
-    catch {
-        throw "RUNTIME_RECEIVER_BUSY=$ReceiveLockPath"
+    elseif (-not (Test-Path $ReceiveLockPath)) {
+        throw "RUNTIME_EXPECTED_RECEIVE_LOCK_MISSING=$ReceiveLockPath"
     }
 
     foreach ($path in @($Repo,$RuntimePython,$Mvs,$CurrentSearch,$CurrentRecords,$FormalJsonl,$ActivationMarker,$CurrentReusable,$ReusableRecords,$ReusableMetadata,$ReusableRelationships,$ReusableCases,$ReusableCorpus,$RuntimeState,$ReceiptsRoot)) {
@@ -90,9 +98,7 @@ try {
     if ([int]$Receipt.projectionSchemaVersion -ne 2) { throw "RUNTIME_RECEIPT_PROJECTION_SCHEMA_UNSUPPORTED=$($Receipt.projectionSchemaVersion)" }
 
     foreach ($name in @('formalKbSha256','knowledgeRecordsSha256','knowledgeMetadataSha256','relationshipsSha256','casesSha256','deliveryManifestSha256')) {
-        if ([string]$Marker.$name -ne [string]$State.$name -or [string]$Marker.$name -ne [string]$Receipt.$name) {
-            throw "RUNTIME_AUTHORITY_FIELD_MISMATCH=$name"
-        }
+        if ([string]$Marker.$name -ne [string]$State.$name -or [string]$Marker.$name -ne [string]$Receipt.$name) { throw "RUNTIME_AUTHORITY_FIELD_MISMATCH=$name" }
     }
     if ((Get-Sha256 $FormalJsonl) -ne [string]$Marker.formalKbSha256) { throw 'RUNTIME_FORMAL_KB_HASH_MISMATCH' }
     if ((Get-Sha256 $ReusableRecords) -ne [string]$Marker.knowledgeRecordsSha256) { throw 'RUNTIME_REUSABLE_RECORDS_HASH_MISMATCH' }
@@ -114,26 +120,14 @@ try {
     $RelationshipCount = @(Get-Content $ReusableRelationships | Where-Object { $_.Trim() }).Count
     $CaseCount = @(Get-Content $ReusableCases | Where-Object { $_.Trim() }).Count
     $ReusableCorpusFiles = @(Get-ChildItem $ReusableCorpus -Filter '*.md' -File)
-    if ($FormalCount -ne $ExpectedTotal -or $SearchCorpusCount -ne $ExpectedTotal) {
-        throw "RUNTIME_TOTAL_COUNT_MISMATCH expected=$ExpectedTotal formal=$FormalCount corpus=$SearchCorpusCount"
-    }
-    if ($ReusableCount -ne $ExpectedReusable -or $MetadataCount -ne $ExpectedReusable -or $ReusableCorpusFiles.Count -ne $ExpectedReusable) {
-        throw "RUNTIME_REUSABLE_COUNT_MISMATCH expected=$ExpectedReusable records=$ReusableCount metadata=$MetadataCount corpus=$($ReusableCorpusFiles.Count)"
-    }
-    if ($RelationshipCount -ne $ExpectedRelationships) {
-        throw "RUNTIME_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationships actual=$RelationshipCount"
-    }
-    if ($CaseCount -ne $ExpectedCases) {
-        throw "RUNTIME_CASE_COUNT_MISMATCH expected=$ExpectedCases actual=$CaseCount"
-    }
+    if ($FormalCount -ne $ExpectedTotal -or $SearchCorpusCount -ne $ExpectedTotal) { throw "RUNTIME_TOTAL_COUNT_MISMATCH expected=$ExpectedTotal formal=$FormalCount corpus=$SearchCorpusCount" }
+    if ($ReusableCount -ne $ExpectedReusable -or $MetadataCount -ne $ExpectedReusable -or $ReusableCorpusFiles.Count -ne $ExpectedReusable) { throw "RUNTIME_REUSABLE_COUNT_MISMATCH expected=$ExpectedReusable records=$ReusableCount metadata=$MetadataCount corpus=$($ReusableCorpusFiles.Count)" }
+    if ($RelationshipCount -ne $ExpectedRelationships) { throw "RUNTIME_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationships actual=$RelationshipCount" }
+    if ($CaseCount -ne $ExpectedCases) { throw "RUNTIME_CASE_COUNT_MISMATCH expected=$ExpectedCases actual=$CaseCount" }
     foreach ($file in $ReusableCorpusFiles) {
         $head = Get-Content $file.FullName -TotalCount 16 -Raw
-        if (-not $head.StartsWith("---`n") -and -not $head.StartsWith("---`r`n")) {
-            throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$($file.Name)"
-        }
-        if ($head -notmatch 'gace-reusable-asset') {
-            throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)"
-        }
+        if (-not $head.StartsWith("---`n") -and -not $head.StartsWith("---`r`n")) { throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$($file.Name)" }
+        if ($head -notmatch 'gace-reusable-asset') { throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)" }
     }
 
     $Status = Invoke-MvsStatus
@@ -142,9 +136,7 @@ try {
     if ($Status -match 'Hybrid search will fall back to vector-only mode') { throw 'RUNTIME_VECTOR_ONLY_FALLBACK_PRESENT' }
 
     if ($Deep) {
-        foreach ($path in @($HistoryProbe,$ReusableProbe)) {
-            if (-not (Test-Path $path)) { throw "DEEP_PROBE_MISSING=$path" }
-        }
+        foreach ($path in @($HistoryProbe,$ReusableProbe)) { if (-not (Test-Path $path)) { throw "DEEP_PROBE_MISSING=$path" } }
         & $RuntimePython -B $HistoryProbe --python $RuntimePython --project-root $CurrentSearch --timeout 180
         if ($LASTEXITCODE -ne 0) { throw "RUNTIME_DEEP_HISTORY_MCP_FAILED=$LASTEXITCODE" }
         & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $CurrentSearch --metadata $ReusableMetadata --expected-count $ExpectedReusable --timeout 180
@@ -152,12 +144,9 @@ try {
         Write-Host "GACE_MODULECATALOG_RUNTIME_DEEP=PASS COMMIT=$Commit RECORDS=$ExpectedReusable MODES=BM25,VECTOR,HYBRID KG=PASS"
     }
 
-    Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable RELATIONSHIPS=$ExpectedRelationships CASES=$ExpectedCases TOTAL=$ExpectedTotal JOURNAL=NONE KG_READY=YES"
+    Write-Host "GACE_MODULECATALOG_RUNTIME_HEALTH=PASS COMMIT=$Commit REUSABLE=$ExpectedReusable RELATIONSHIPS=$ExpectedRelationships CASES=$ExpectedCases TOTAL=$ExpectedTotal JOURNAL=NONE KG_READY=YES LOCK_MODE=$([string]::Join('', $(if ($AssumeReceiveLockHeld) {'INHERITED'} else {'OWNED'})))"
 }
 finally {
-    if ($null -ne $HealthLock) {
-        $HealthLock.Dispose()
-        $HealthLock = $null
-        Remove-Item $ReceiveLockPath -Force -ErrorAction SilentlyContinue
-    }
+    if ($null -ne $HealthLock) { $HealthLock.Dispose(); $HealthLock = $null }
+    if ($OwnsHealthLock) { Remove-Item $ReceiveLockPath -Force -ErrorAction SilentlyContinue }
 }
