@@ -62,6 +62,28 @@ Write-Host "FIXTURE_RECEIVER_PASS COMMIT=$commit"
     & pwsh -NoProfile -File $Processor -Root $Root -InboxRoot $Ready
     if ($LASTEXITCODE -ne 0) { throw "EMPTY_INBOX_FAILED=$LASTEXITCODE" }
 
+    # A processor owned by another process is never overridden or unlinked.
+    $ProcessorLockPath = Join-Path $InboxBase 'processor.lock'
+    $heldProcessorLock = [System.IO.File]::Open(
+        $ProcessorLockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $busyOutput = @(& pwsh -NoProfile -File $Processor -Root $Root -InboxRoot $Ready 2>&1)
+        $busyCode = $LASTEXITCODE
+        if ($busyCode -eq 0) { throw 'PROCESSOR_BUSY_GATE_DID_NOT_FAIL' }
+        if (($busyOutput -join "`n") -notmatch 'MODULECATALOG_INBOX_PROCESSOR_BUSY') {
+            throw "PROCESSOR_BUSY_WRONG_FAILURE=$($busyOutput -join ' | ')"
+        }
+        if (-not (Test-Path $ProcessorLockPath)) { throw 'PROCESSOR_FOREIGN_LOCK_WAS_REMOVED' }
+    }
+    finally {
+        $heldProcessorLock.Dispose()
+        Remove-Item $ProcessorLockPath -Force -ErrorAction SilentlyContinue
+    }
+
     # Incomplete transport is left pending, not claimed.
     $Incomplete = Join-Path $Ready 'incomplete'
     New-Item -ItemType Directory -Path $Incomplete -Force | Out-Null
@@ -130,7 +152,7 @@ Write-Host "FIXTURE_RECEIVER_PASS COMMIT=$commit"
         throw 'PROCESSOR_LOCK_NOT_RELEASED'
     }
 
-    Write-Host 'GACE_MODULECATALOG_INBOX_LIFECYCLE=PASS RECEIVER_DIAGNOSTICS=PASS'
+    Write-Host 'GACE_MODULECATALOG_INBOX_LIFECYCLE=PASS RECEIVER_DIAGNOSTICS=PASS PROCESSOR_LOCK=PASS'
 }
 finally {
     Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
