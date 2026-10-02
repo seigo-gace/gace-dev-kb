@@ -35,7 +35,8 @@ jobs:
             scripts/enrich_modulecatalog_search_corpus.py \
             scripts/accept_modulecatalog_delivery.py \
             tests/mcp_reusable_asset_e2e.py \
-            tests/test_accept_modulecatalog_delivery.py
+            tests/test_accept_modulecatalog_delivery.py \
+            tests/test_enrich_modulecatalog_search_corpus.py
 
       - name: Node syntax gate
         run: node --check scripts/run_modulecatalog_reusable_export.mjs
@@ -77,6 +78,9 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_activation_recovery.ps1
 
+      - name: Search corpus KG relation projection tests
+        run: python -B tests/test_enrich_modulecatalog_search_corpus.py
+
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
 
@@ -113,23 +117,38 @@ jobs:
             --accepted-root /tmp/gace-accepted/$MODULECATALOG_COMMIT \
             --receipt /tmp/gace-receipts/$MODULECATALOG_COMMIT.json
           python - <<'PY'
-          import json, os
+          import hashlib, json, os
           from pathlib import Path
+
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
           commit = os.environ['MODULECATALOG_COMMIT']
           root = Path('/tmp/gace-accepted') / commit
+          projection = root / 'projection'
           state = json.loads((root / 'state.json').read_text())
-          metadata = [json.loads(line) for line in (root / 'projection' / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
-          records = [line for line in (root / 'projection' / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
-          corpus = list((root / 'projection' / 'records').glob('*.md'))
+          metadata = [json.loads(line) for line in (projection / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
+          records = [line for line in (projection / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
+          relationships = [json.loads(line) for line in (projection / 'relationships.jsonl').read_text().splitlines() if line.strip()]
+          cases = [json.loads(line) for line in (projection / 'cases.jsonl').read_text().splitlines() if line.strip()]
+          corpus = list((projection / 'records').glob('*.md'))
           receipt = json.loads((Path('/tmp/gace-receipts') / f'{commit}.json').read_text())
           assert state['status'] == 'ACCEPTED'
           assert receipt['status'] == 'ACCEPTED'
+          assert state['projectionSchemaVersion'] == 2
+          assert receipt['projectionSchemaVersion'] == 2
           assert state['assetCount'] == 80
           assert state['knowledgeUnitCount'] == 720
+          assert state['caseCount'] == 160
+          assert state['relationshipCount'] >= 720
           assert state['corpusRuntimeEnrichment'] == 'mvs-4.1.14-frontmatter-v1'
           assert len(metadata) == 720
           assert len(records) == 720
+          assert len(relationships) == state['relationshipCount']
+          assert len(cases) == 160
           assert len(corpus) == 720
+          assert sha(projection / 'relationships.jsonl') == state['relationshipsSha256'] == receipt['relationshipsSha256']
+          assert sha(projection / 'cases.jsonl') == state['casesSha256'] == receipt['casesSha256']
           assert all(path.read_text().startswith('---\n') for path in corpus)
           assert all('"gace-reusable-asset"' in path.read_text() for path in corpus)
           assert len({row['parent_asset_id'] for row in metadata}) == 80
@@ -138,5 +157,10 @@ jobs:
           assert required <= kinds, sorted(kinds)
           assert all(row['verification']['status'] == 'verified' for row in metadata)
           assert all(row['_gace']['commit'] == commit for row in metadata)
-          print(f'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)} KG_READY=YES')
+          dependency_tagged = sum('depends-on-' in path.read_text() for path in corpus)
+          print(
+              'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS '
+              f'ASSETS=80 RECORDS=720 RELATIONSHIPS={len(relationships)} CASES=160 '
+              f'KINDS={len(kinds)} DEPENDENCY_TAGGED_DOCS={dependency_tagged} KG_READY=YES'
+          )
           PY
