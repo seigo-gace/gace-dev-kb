@@ -4,6 +4,7 @@ param(
     [ValidateRange(1,3600)][int]$PollSeconds = 10,
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
+    [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
     [ValidateRange(1024,1073741824)][long]$MaxLogBytes = 5242880,
     [ValidateRange(1,20)][int]$MaxLogFiles = 5,
     [switch]$Once
@@ -12,12 +13,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repo = Join-Path $Root 'repo'
 $Processor = Join-Path $Repo 'scripts\process-modulecatalog-inbox-windows.ps1'
+$HealthCheck = Join-Path $Repo 'scripts\check-modulecatalog-kb-runtime-windows.ps1'
+$ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $LogPath = Join-Path $IntakeRoot 'receiver-service.jsonl'
 $StopPath = Join-Path $IntakeRoot 'receiver.stop'
 $ServiceLockPath = Join-Path $IntakeRoot 'receiver-service.lock'
 
-foreach ($path in @($Repo,$Processor,$Python)) {
+$required = @($Repo,$Processor,$Python)
+if ($RuntimeHealthSeconds -gt 0) { $required += $HealthCheck }
+foreach ($path in $required) {
     if (-not (Test-Path $path)) { throw "RECEIVER_SERVICE_REQUIRED_PATH_MISSING=$path" }
 }
 $PowerShellHost = (Get-Process -Id $PID).Path
@@ -77,10 +82,11 @@ try {
         finally { $stream.Dispose() }
     }
 
-    Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds Once=$Once Host=$PowerShellHost"
-    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds ONCE=$Once HOST=$PowerShellHost"
+    Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds RuntimeHealthSeconds=$RuntimeHealthSeconds Once=$Once Host=$PowerShellHost"
+    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds ONCE=$Once HOST=$PowerShellHost"
 
     $LastPassLogUtc = [DateTime]::MinValue
+    $LastHealthUtc = [DateTime]::MinValue
     while ($true) {
         if (Test-Path $StopPath) {
             Write-ServiceEvent -Status 'STOPPED' -Message "Stop marker detected: $StopPath"
@@ -94,6 +100,15 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_INBOX_PROCESSOR_FAILED=$LASTEXITCODE" }
 
             $now = [DateTime]::UtcNow
+            if ($RuntimeHealthSeconds -gt 0 -and (Test-Path $ActivationMarker) -and (($now - $LastHealthUtc).TotalSeconds -ge $RuntimeHealthSeconds)) {
+                & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $HealthCheck -Root $Root
+                if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_RUNTIME_HEALTH_FAILED=$LASTEXITCODE" }
+                $LastHealthUtc = [DateTime]::UtcNow
+                Write-ServiceEvent -Status 'HEALTH_PASS' -Message "Active KB runtime health passed. Marker=$ActivationMarker"
+                Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=HEALTH_PASS MARKER=$ActivationMarker"
+            }
+
+            $now = [DateTime]::UtcNow
             if ($Once -or (($now - $LastPassLogUtc).TotalSeconds -ge $HeartbeatSeconds)) {
                 Write-ServiceEvent -Status 'POLL_PASS' -Message 'Inbox processor completed.'
                 $LastPassLogUtc = $now
@@ -101,8 +116,9 @@ try {
         }
         catch {
             $message = [string]$_.Exception.Message
-            Write-ServiceEvent -Status 'POLL_FAILED' -Message $message
-            Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=POLL_FAILED ERROR=$message"
+            $status = if ($message -match 'MODULECATALOG_RUNTIME_HEALTH_FAILED|RUNTIME_') { 'HEALTH_FAILED' } else { 'POLL_FAILED' }
+            Write-ServiceEvent -Status $status -Message $message
+            Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=$status ERROR=$message"
             if ($Once) { throw }
             $nextSleepSeconds = [Math]::Max($PollSeconds,$RetryBackoffSeconds)
             Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=BACKOFF SECONDS=$nextSleepSeconds"
