@@ -46,10 +46,12 @@ jobs:
             'scripts/test-modulecatalog-reusable-export-windows.ps1',
             'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1',
             'scripts/activate-modulecatalog-accepted-windows.ps1',
+            'scripts/recover-modulecatalog-activation-windows.ps1',
             'scripts/receive-modulecatalog-kbdata-windows.ps1',
             'scripts/process-modulecatalog-inbox-windows.ps1',
             'scripts/check-modulecatalog-kb-runtime-windows.ps1',
-            'tests/test_modulecatalog_inbox_lifecycle.ps1'
+            'tests/test_modulecatalog_inbox_lifecycle.ps1',
+            'tests/test_modulecatalog_activation_recovery.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -69,6 +71,10 @@ jobs:
       - name: Inbox lifecycle and crash recovery
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_inbox_lifecycle.ps1
+
+      - name: Activation journal recovery
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_activation_recovery.ps1
 
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
