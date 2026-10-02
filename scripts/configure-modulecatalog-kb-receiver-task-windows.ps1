@@ -135,14 +135,21 @@ do {
     if ($task.State -ne 'Running') { continue }
     if (-not (Test-Path $ServiceLockPath) -or -not (Test-Path $ServiceLogPath)) { continue }
 
+    # A previous hard stop can leave one truncated JSONL line. Parse each line
+    # independently so stale malformed history cannot hide the new STARTED event.
     $events = @()
-    try {
-        $events = @(Get-Content $ServiceLogPath -Tail 50 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    foreach ($line in @(Get-Content $ServiceLogPath -Tail 50 -ErrorAction SilentlyContinue)) {
+        if (-not $line.Trim()) { continue }
+        try {
+            $event = $line | ConvertFrom-Json -ErrorAction Stop
+            if ($null -ne $event) { $events += $event }
+        }
+        catch { continue }
     }
-    catch { $events = @() }
     $recentStarted = @($events | Where-Object {
-        $_.status -eq 'STARTED' -and
-        ([DateTime]$_.atUtc).ToUniversalTime() -ge $StartRequestedUtc.AddSeconds(-2)
+        if ($_.status -ne 'STARTED' -or -not $_.atUtc) { return $false }
+        try { return ([DateTime]$_.atUtc).ToUniversalTime() -ge $StartRequestedUtc.AddSeconds(-2) }
+        catch { return $false }
     })
     if ($recentStarted.Count -gt 0) {
         $startupVerified = $true
