@@ -44,6 +44,7 @@ try {
         -RetryBackoffSeconds 2 `
         -HeartbeatSeconds 60 `
         -RuntimeHealthSeconds 0 `
+        -DeepRuntimeHealthSeconds 0 `
         -RetentionSeconds 0
     if ($LASTEXITCODE -ne 0) { throw "RECEIVER_BACKOFF_RUN_FAILED=$LASTEXITCODE" }
 
