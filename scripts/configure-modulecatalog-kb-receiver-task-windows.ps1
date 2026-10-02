@@ -5,6 +5,11 @@ param(
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
+    [ValidateRange(0,604800)][int]$RetentionSeconds = 3600,
+    [ValidateRange(1,50)][int]$KeepActivationBackups = 3,
+    [ValidateRange(1,500)][int]$KeepProcessedDeliveries = 20,
+    [ValidateRange(1,500)][int]$KeepFailedDeliveries = 20,
+    [ValidateRange(1,100)][int]$KeepAcceptedSnapshots = 5,
     [ValidateRange(1,999)][int]$RestartCount = 12,
     [ValidateRange(1,60)][int]$RestartIntervalMinutes = 1,
     [ValidateRange(5,120)][int]$StartupVerifySeconds = 20,
@@ -69,7 +74,12 @@ $arguments = @(
     '-PollSeconds',[string]$PollSeconds,
     '-RetryBackoffSeconds',[string]$RetryBackoffSeconds,
     '-HeartbeatSeconds',[string]$HeartbeatSeconds,
-    '-RuntimeHealthSeconds',[string]$RuntimeHealthSeconds
+    '-RuntimeHealthSeconds',[string]$RuntimeHealthSeconds,
+    '-RetentionSeconds',[string]$RetentionSeconds,
+    '-KeepActivationBackups',[string]$KeepActivationBackups,
+    '-KeepProcessedDeliveries',[string]$KeepProcessedDeliveries,
+    '-KeepFailedDeliveries',[string]$KeepFailedDeliveries,
+    '-KeepAcceptedSnapshots',[string]$KeepAcceptedSnapshots
 ) -join ' '
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $arguments -WorkingDirectory $Repo
@@ -87,9 +97,6 @@ $principal = New-ScheduledTaskPrincipal `
     -LogonType Interactive `
     -RunLevel Limited
 
-# A running old task would make MultipleInstances=IgnoreNew silently preserve the
-# previous command line after an update. Stop it first so the registered config
-# below is the one that actually starts.
 Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
 $stopDeadline = [DateTime]::UtcNow.AddSeconds(10)
 do {
@@ -108,7 +115,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'Consumes transported ModuleCatalog KBData, activates it through the existing G-ACE KB runtime, and continuously verifies active runtime health.' `
+    -Description 'Consumes transported ModuleCatalog KBData, activates it through the existing G-ACE KB runtime, continuously verifies active runtime health, and bounds operational backup/archive retention.' `
     -Force | Out-Null
 
 $registered = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
@@ -145,8 +152,6 @@ do {
     if ($task.State -ne 'Running') { continue }
     if (-not (Test-Path $ServiceLockPath) -or -not (Test-Path $ServiceLogPath)) { continue }
 
-    # A previous hard stop can leave one truncated JSONL line. Parse each line
-    # independently so stale malformed history cannot hide the new STARTED event.
     $events = @()
     foreach ($line in @(Get-Content $ServiceLogPath -Tail 50 -ErrorAction SilentlyContinue)) {
         if (-not $line.Trim()) { continue }
@@ -172,7 +177,7 @@ if (-not $startupVerified) {
     throw "RECEIVER_TASK_STARTUP_HEALTH_NOT_VERIFIED STATE=$($task.State) LOCK=$ServiceLockPath LOG=$ServiceLogPath"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED PRINCIPAL_SID=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED PRINCIPAL_SID=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RETENTION_SECONDS=$RetentionSeconds KEEP_BACKUPS=$KeepActivationBackups KEEP_PROCESSED=$KeepProcessedDeliveries KEEP_FAILED=$KeepFailedDeliveries KEEP_ACCEPTED=$KeepAcceptedSnapshots RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
 Write-Host "SERVICE_LOG=$ServiceLogPath"
