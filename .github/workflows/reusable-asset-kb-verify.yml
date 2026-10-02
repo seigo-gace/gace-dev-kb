@@ -60,6 +60,7 @@ jobs:
             'scripts/check-modulecatalog-kb-runtime-windows.ps1',
             'tests/test_modulecatalog_inbox_lifecycle.ps1',
             'tests/test_modulecatalog_transport_readiness.ps1',
+            'tests/test_modulecatalog_receiver_timeout.ps1',
             'tests/test_modulecatalog_activation_recovery.ps1',
             'tests/test_modulecatalog_runtime_health_lock.ps1',
             'tests/test_modulecatalog_receiver_service.ps1'
@@ -86,6 +87,10 @@ jobs:
       - name: Transport readiness and partial-copy safety
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_transport_readiness.ps1
+
+      - name: Receiver timeout recovery
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_timeout.ps1
 
       - name: Activation journal recovery
         shell: pwsh
