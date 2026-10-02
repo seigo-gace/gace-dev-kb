@@ -1,14 +1,28 @@
 # ModuleCatalog KBData receive-to-runtime boundary
 
-## Responsibility boundary
+## 1. Responsibility boundary
 
 ModuleCatalog owns reusable-asset creation, verification, search-ready KBData generation and transport.
+
 G-ACE KB starts at **receipt of a transported `gace.reusable-asset.v1` delivery**.
-The operational KB path must not clone/fetch ModuleCatalog or regenerate producer canonical data.
 
-KB-side runtime adaptation is allowed only as a derived projection required by the existing KB runtime. Canonical transported files remain unchanged.
+The operational KB path must not clone/fetch ModuleCatalog or regenerate producer canonical data. KB-side adaptation is allowed only as a derived projection required by the existing G-ACE KB runtime; transported canonical files remain unchanged.
 
-## Inbox contract
+```text
+ModuleCatalog
+create / verify / shape KBData / transport
+        ↓
+──────────── responsibility boundary ────────────
+        ↓
+G-ACE KB
+receipt / admission / projection
+        ↓
+existing BM25 / Vector / Hybrid / KG / MCP
+        ↓
+Current activation / health / retention
+```
+
+## 2. Inbox contract
 
 Default Windows inbox:
 
@@ -20,40 +34,60 @@ F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\
 └─ failed\
 ```
 
-The transport side should build a complete delivery outside `ready` and atomically move/rename it into `ready` when possible.
+The transport side should construct a complete delivery outside `ready` and atomically move/rename it into `ready` when possible.
 
-The KB nevertheless performs a transport-completeness preflight before claiming a directory. It requires the top-level manifest, declared Asset directories/manifests, every listed bundle file, and at least the declared byte size. A file that is still shorter than its manifest declaration remains `PENDING`; it is not moved to `processing` and is not falsely classified as a failed KB admission.
+The KB nevertheless performs a transport-completeness preflight before claiming a directory. It requires the top-level manifest, declared Asset directories/manifests, every listed bundle file, and at least each declared byte size.
 
-The preflight never follows rooted or `..` manifest paths outside an Asset directory. It is deliberately **not** the integrity authority: malformed/oversized/corrupt payloads are claimable so the full admission gate can reject and archive them deterministically using exact size/hash/schema/provenance checks.
+A file still shorter than its declaration remains `PENDING`; it is not moved to `processing` and is not falsely classified as failed admission.
 
-The active KB is a single-current-snapshot runtime. Until the producer supplies explicit monotonic ordering/predecessor authority, more than one complete ready delivery is rejected with `MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY`. Directory names, filesystem timestamps and Git commit time are never used to guess which snapshot is newer.
+The preflight rejects rooted/out-of-tree manifest paths. It is deliberately not the final integrity authority: a complete but malformed/oversized/hash-invalid delivery is claimable so the full admission gate can reject it deterministically and preserve failure evidence.
 
-## Claim, retry and archive lifecycle
+## 3. Ordering boundary
+
+The active KB is a single-Current-snapshot runtime.
+
+Until the producer supplies explicit monotonic sequence/predecessor/supersession authority, more than one complete delivery in `ready` fails closed with:
+
+```text
+MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY
+```
+
+Directory name, filesystem time and Git commit time are never used to guess ordering.
+
+## 4. Claim / retry / archive lifecycle
+
+Normal flow:
 
 ```text
 ready
 → processing
+→ ACCEPTED
 → ACTIVE
 → processed
 ```
 
-A single stranded `processing` delivery is resumed before any new ready delivery. More than one stranded processing delivery fails closed.
+One stranded `processing` delivery is resumed before any new `ready` delivery is considered. More than one stranded processing delivery fails closed.
 
-Failure classes are intentionally separated:
+Failure classes:
 
 ```text
-permanent admission / activation failure → failed\<unique-name>\
-transient receiver busy / health / timeout → processing + kb-retryable.json
-runtime ACTIVE but archive move failed      → processing + kb-archive-pending.json
+permanent admission/activation failure
+→ failed\<unique-name>\
+
+transient receiver busy / health / timeout
+→ processing + kb-retryable.json
+
+runtime ACTIVE but processed-archive move failed
+→ processing + kb-archive-pending.json
 ```
 
-Every receiver attempt stores its stdout/stderr inside the claimed delivery. Successful processed archives also contain `kb-active-receipt.json`; permanent failures contain machine-readable `kb-failure.json` pointing to the attempt logs.
+Each receiver attempt preserves stdout/stderr inside the claimed delivery. Successful archives contain `kb-active-receipt.json`. Permanent failures contain machine-readable `kb-failure.json` pointing to attempt logs.
 
-A repeated transport may reuse the same delivery ID. Existing processed evidence is never overwritten: a successful replay is archived under a unique `-replay-<timestamp>-<id>` directory while Current/idempotency rules remain enforced by the receiver.
+A repeated transport may reuse the same delivery ID. Existing processed evidence is never overwritten; replay is archived under a unique replay directory while Current/idempotency rules are still enforced by the receiver.
 
-## Receive and health serialization
+## 5. Receive and health serialization
 
-Three locks protect different boundaries:
+Three locks protect distinct boundaries:
 
 ```text
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receiver-service.lock
@@ -61,127 +95,56 @@ F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\processor.lock
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receive.lock
 ```
 
-`receiver-service.lock` prevents two watchers. `processor.lock` serializes claim/archive lifecycle. `receive.lock` serializes admission/index/cutover and Current runtime health inspection.
+- `receiver-service.lock` prevents multiple continuous watchers.
+- `processor.lock` serializes claim/archive lifecycle.
+- `receive.lock` serializes admission/index/cutover, Current health inspection and operational retention.
 
-The health checker may use `-AssumeReceiveLockHeld` only when invoked internally by the receiver that already owns `receive.lock`; this avoids self-deadlock without weakening external serialization.
+`check-modulecatalog-kb-runtime-windows.ps1 -AssumeReceiveLockHeld` is allowed only when an internal caller already owns the receive lock.
 
-## Receiver timeout and process-tree recovery
+## 6. Receiver timeout / orphan prevention
 
 `process-modulecatalog-inbox-windows.ps1` bounds one receiver attempt with `ReceiverTimeoutSeconds` (default 7200 seconds).
 
-Timeout is `RETRYABLE`, not a permanent failure. The claimed delivery remains in `processing` for the next run.
+Timeout is retryable rather than permanent. The delivery remains recoverable in `processing`.
 
-On Windows, timeout terminates the receiver process tree with `taskkill.exe /T /F`, because a receiver may own Python/MVS descendants. Killing only the PowerShell wrapper could otherwise leave an orphan indexer mutating the runtime while the next retry begins. Non-Windows test environments use the normal forced process termination fallback.
+On Windows, timeout terminates the complete receiver process tree with `taskkill.exe /T /F`, preventing orphan Python/MVS indexers from mutating the KB after the wrapper has timed out. Non-Windows CI fixtures use the normal forced-process fallback.
 
-## Continuous Windows receiver
+## 7. Admission and accepted projection
 
-`watch-modulecatalog-kb-inbox-windows.ps1` is the continuous KB-side consumer. It invokes the inbox processor synchronously, so one BM25/Vector/KG activation must finish before another delivery is considered.
-
-The watcher also performs **automatic Current-runtime health checks** whenever an ACTIVE marker exists. `RuntimeHealthSeconds` defaults to 300 seconds. The normal continuous check is intentionally non-Deep to keep idle operating cost low; it verifies active authority, hashes/cardinality, MVS index state and known degradation warnings. Deep MCP verification remains available separately and is already required during activation/post-cutover.
-
-Health events are recorded as `HEALTH_PASS` / `HEALTH_FAILED`. A health failure does not mutate Current; it is logged and the watcher applies retry backoff while remaining available for a later delivery that may repair the runtime.
-
-Service events are written to:
+Acceptance validates at least:
 
 ```text
-F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receiver-service.jsonl
+format / schema version
+Catalog repository + exact commit
+Asset count / Knowledge Unit count / relationship count / case count
+per-Asset manifest membership
+file sizes and SHA-256
+bundle hash
+source Asset hash
+Asset identity / provenance
+verification status
+Knowledge Unit identity/parent linkage
+Case identity/parent linkage
+Relationship identity/endpoints
+global duplicate IDs
+unknown relationship targets
 ```
 
-Idle PASS logging is heartbeat-throttled and the JSONL is bounded by rotation.
+Missing producer facts remain missing/unknown. The KB does not manufacture canonical values.
 
-One-shot verification:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File F:\G-ACE-KB\repo\scripts\watch-modulecatalog-kb-inbox-windows.ps1 `
-  -Once
-```
-
-Set `-RuntimeHealthSeconds 0` only for isolated tests that intentionally disable continuous Current health inspection.
-
-## Windows scheduled receiver task
-
-`configure-modulecatalog-kb-receiver-task-windows.ps1` can register the receiver as the current user, Limited, AtLogOn task:
-
-```text
-\G-ACE-KB-ModuleCatalogReceiver
-```
-
-The installer verifies persisted executable, arguments, working directory and principal. When replacing an existing task it first stops the old running instance so `MultipleInstances=IgnoreNew` cannot silently leave the previous command line active. After registration it starts the new task and requires **both** Running state and a fresh watcher `STARTED` event while the receiver-service lock is held. Merely observing Scheduled Task state is not considered sufficient startup proof.
-
-The scheduled command carries `RuntimeHealthSeconds` into the watcher, so automatic health monitoring is part of the same operational receiver rather than a separate manual procedure.
-
-It also configures bounded restart behavior for transient startup failure, defaulting to 12 restart attempts at a 1-minute interval. This covers cases such as delayed availability of the F: runtime at logon without creating an infinite restart loop.
-
-Install/start:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File F:\G-ACE-KB\repo\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1
-```
-
-Uninstall/stop:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File F:\G-ACE-KB\repo\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 `
-  -Uninstall
-```
-
-Repository implementation does not install this task. Installation remains an explicit Master-PC environment action after the real runtime gate.
-
-## Receipts and Current authority
-
-Per-commit receipts:
-
-```text
-F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receipts\<catalog-commit>.json
-```
-
-States:
-
-```text
-ACCEPTED = transport payload passed admission and local derived projection exists
-ACTIVE   = indexing + MCP + post-cutover Current verification passed
-```
-
-Current authority:
-
-```text
-F:\G-ACE-KB\data\knowledge-records\modulecatalog-reusable-active.json
-```
-
-The current reusable snapshot also contains `runtime-state.json`. ACTIVE receipt, activation marker and runtime-state must agree on Catalog commit and runtime hashes. An old ACTIVE receipt alone is never accepted as Current authority.
-
-A replay of the Current ACTIVE commit revalidates the transported payload and then reruns deep runtime health before returning idempotent success.
-
-## Accepted projection and existing KB features
-
-The eight-field Knowledge Record remains only a compatibility envelope. Projection schema v2 preserves:
+Projection schema v2 preserves:
 
 ```text
 knowledge-records.jsonl
 knowledge-metadata.jsonl
 relationships.jsonl
 cases.jsonl
-records/*.md
+records\*.md
 ```
 
-`relationships.jsonl` and `cases.jsonl` remain structured sidecars with independent SHA-256 and cardinality verification through acceptance, activation and health checks.
+The eight-field Knowledge Record is a compatibility envelope only. Full reusable metadata remains structured.
 
-Runtime-only derived frontmatter exposes stable reusable-asset metadata and graph semantics without modifying transported canonical files. Tags include:
-
-```text
-gace-reusable-asset
-asset-<asset-id>
-knowledge-kind-<kind>
-lifecycle-<status>
-verification-<status>
-relation-<relation-type>
-depends-on-<asset-id>
-```
-
-Resolvable producer relationships/dependencies also create deterministic `related:` document links. Activation prefixes ModuleCatalog runtime filenames and rewrites these related targets to the same prefix before indexing.
+## 8. Search / graph runtime projection
 
 The existing `mcp-vector-search 4.1.14` runtime remains the only search/graph runtime:
 
@@ -193,53 +156,76 @@ Knowledge Graph
 MCP
 ```
 
-## Runtime search/use gates
+Runtime-only YAML frontmatter exposes stable identity and graph metadata without modifying transported canonical files. Tags include:
+
+```text
+gace-reusable-asset
+asset-<asset-id>
+knowledge-kind-<kind>
+lifecycle-<status>
+verification-<status>
+relation-<relation-type>
+relationship-id-<relationship-id>
+depends-on-<asset-id>
+```
+
+The full accepted `relationships.jsonl` sidecar is consulted during runtime enrichment, not only the relationship subset already embedded in individual metadata rows. Therefore future producer relationship kinds can reach the existing graph projection without changing Canonical data or silently dropping Asset-level edges.
+
+Resolvable producer relationship/dependency targets create deterministic `related:` document links. Runtime filename prefixing rewrites those targets consistently before indexing.
+
+## 9. Runtime search/use gates
 
 Activation requires:
 
 ```text
 all Knowledge Units exact BM25 retrieval by stable ID
-representative of every Knowledge Kind via BM25 / Vector / Hybrid natural retrieval
+representative of each Knowledge Kind by natural BM25 / Vector / Hybrid retrieval
 representative Case ID retrieval
 representative Relationship ID retrieval
 KG reusable-data tag query
-KG relation-type query when relationship semantics exist
-KG dependency query when producer dependencies exist
-KG LINKS_TO presence when resolvable producer relations exist
+KG relation/dependency semantics when producer data supplies them
 existing repository-history MCP regression
-existing accepted-asset regression when present
-post-cutover rerun against the actual Current runtime path
+existing non-Catalog accepted Knowledge preservation
+post-cutover rerun against the actual Current search path
 ```
 
-No producer relationship or dependency is invented when absent.
+No relationship/dependency is invented when absent.
 
-## Operational pipeline
+## 10. Existing Knowledge preservation
+
+When replacing a ModuleCatalog snapshot, the candidate formal set removes the previous ModuleCatalog reusable snapshot but preserves repository-history and non-Catalog Knowledge.
+
+The corresponding non-Catalog Current Markdown corpus is copied byte-for-byte into Staging before adding the new prefixed ModuleCatalog runtime corpus. This avoids flattening future rich non-Catalog Knowledge through a legacy renderer during Catalog refresh.
+
+## 11. ACCEPTED vs ACTIVE
+
+Per-commit receipts are stored under:
 
 ```text
-transported delivery
-→ ready
-→ transport-completeness preflight
-→ processing claim
-→ full admission / integrity verification
-→ projection schema v2
-→ relationship/case sidecars retained
-→ runtime-only search/KG enrichment
-→ ACCEPTED receipt
-→ preserve non-Catalog Current corpus
-→ replace prior ModuleCatalog reusable snapshot candidate
-→ existing BM25 / Vector / KG staging index
-→ existing-history MCP regression
-→ reusable BM25 / Vector / Hybrid / KG gates
-→ durable PREPARED activation journal
-→ backup-backed Current cutover
-→ post-cutover MCP from actual Current path
-→ matching ACTIVE runtime-state / marker / receipt
-→ clear journal
-→ processed archive with ACTIVE receipt + receiver logs
-→ scheduled automatic Current health checks
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receipts\<catalog-commit>.json
 ```
 
-## Cutover crash recovery
+Meanings:
+
+```text
+ACCEPTED
+= transport payload passed admission and local derived projection exists
+
+ACTIVE
+= staging index + MCP gates + Current cutover + post-cutover verification passed
+```
+
+Current authority:
+
+```text
+F:\G-ACE-KB\data\knowledge-records\modulecatalog-reusable-active.json
+```
+
+The Current reusable snapshot also contains `runtime-state.json`. ACTIVE receipt, activation marker and runtime-state must agree on commit and runtime hashes. An old ACTIVE receipt alone is never Current authority.
+
+A replay of the Current commit revalidates the transported bytes and reruns Deep Current health before idempotent success.
+
+## 12. Atomic cutover and crash recovery
 
 Before destructive cutover, activation writes:
 
@@ -247,36 +233,81 @@ Before destructive cutover, activation writes:
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\activation-transaction.json
 ```
 
-The PREPARED journal records every current/backup/staging path required for recovery.
+The PREPARED journal records every Current/backup/staging path needed for recovery.
 
-`recover-modulecatalog-activation-windows.ps1` runs automatically before a new activation:
+`recover-modulecatalog-activation-windows.ps1` runs before a new activation:
 
-- if ACTIVE marker + receipt + runtime-state already agree on the target commit, the previous activation had committed and recovery finalizes it;
-- otherwise the prior fully-known Current search/formal/reusable/authority state is restored;
+- if ACTIVE marker + receipt + runtime-state already agree on the target, the prior activation had committed and recovery finalizes it;
+- otherwise the prior fully-known search/formal/reusable/authority state is restored;
 - missing required recovery evidence fails closed.
 
 The journal is removed only after successful finalization or completed rollback.
 
-## Data retention
+## 13. Continuous Windows receiver
 
-Normal search contains one Current ModuleCatalog reusable snapshot, not every historic Catalog snapshot. Existing repository-history Knowledge and non-ModuleCatalog accepted data are preserved.
+`watch-modulecatalog-kb-inbox-windows.ps1` is the continuous consumer. One activation finishes before another delivery is considered.
 
-Current reusable snapshot:
+The watcher also performs automatic Current health checks whenever an ACTIVE marker exists. `RuntimeHealthSeconds` defaults to 300 seconds. Normal continuous checks are intentionally non-Deep to reduce idle cost; Deep MCP verification is already mandatory during activation and remains available manually.
+
+Service events are stored at:
 
 ```text
-knowledge-records.jsonl
-knowledge-metadata.jsonl
-relationships.jsonl
-cases.jsonl
-records/*.md
-delivery-manifest.json
-acceptance-state.json
-runtime-state.json
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receiver-service.jsonl
 ```
 
-Processed/failed delivery archives are operational evidence and are not automatically deleted by the receiver. No retention deletion policy is implied by this branch.
+Idle PASS logging is heartbeat-throttled and the JSONL is bounded by rotation. Failures use retry backoff rather than a tight retry loop.
 
-## Runtime health verification
+## 14. Windows Scheduled Task
+
+`configure-modulecatalog-kb-receiver-task-windows.ps1` can register:
+
+```text
+\G-ACE-KB-ModuleCatalogReceiver
+```
+
+as the current user, Limited, AtLogOn.
+
+Installer verification covers executable, complete arguments, working directory, principal SID, Running state, receiver service lock and a fresh watcher `STARTED` event. Existing running task instances are stopped before replacement so stale command-line settings are not silently retained through `MultipleInstances=IgnoreNew`.
+
+The task also carries health/retention cadence and retention limits into the watcher and configures bounded restart attempts for transient startup failure.
+
+Repository code does **not** install the task automatically. Master-PC installation remains an explicit environment action after the genuine transported-data runtime gate.
+
+## 15. Operational retention
+
+The receiver no longer leaves operational archives/backups unbounded.
+
+Default retention:
+
+```text
+activation rollback backups     3 per class
+processed delivery archives    20
+failed delivery archives       20
+accepted delivery snapshots     5
+failed search-runtime backups   2
+```
+
+Retention runs hourly by default from the continuous watcher.
+
+Before deletion it acquires `receive.lock`. If another receive/index/health operation owns that lock, cleanup skips safely. Cleanup also skips while an activation journal exists.
+
+Protected regardless of age/rank:
+
+```text
+Current accepted snapshot
+ACTIVE backupFormal
+ACTIVE backupSearch
+ACTIVE backupReusable when recorded
+immediate reusable rollback sibling derived from backupSearch timestamp for older ACTIVE marker schema
+```
+
+Only known paths below the G-ACE KB data roots are eligible for deletion, and path-root checks run before removal. Transaction scratch is removable only while the receive lock is held and no activation journal exists.
+
+Small per-commit receipt JSON files are kept as audit records.
+
+Detailed policy: [MODULECATALOG_KB_RETENTION.md](MODULECATALOG_KB_RETENTION.md).
+
+## 16. Runtime health verification
 
 `check-modulecatalog-kb-runtime-windows.ps1` verifies:
 
@@ -286,22 +317,15 @@ formal KB hash
 reusable records/metadata hashes
 relationship/case hashes + counts
 delivery manifest hash
-Current corpus counts and runtime tags
+Current corpus counts/runtime tags
 MVS indexed-file cardinality
-absence of known degraded vector-only/BM25 warnings
+absence of known BM25/vector degraded-mode warnings
+no unresolved activation journal
 ```
 
 `-Deep` reruns repository-history plus reusable MCP BM25/Vector/Hybrid/KG gates.
 
-The watcher invokes the non-Deep health check automatically on its configured cadence. Manual Deep inspection remains available:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File F:\G-ACE-KB\repo\scripts\check-modulecatalog-kb-runtime-windows.ps1 `
-  -Deep
-```
-
-## Manual commands
+## 17. Manual commands
 
 Process one already-transported bundle:
 
@@ -318,14 +342,38 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File F:\G-ACE-KB\repo\scripts\process-modulecatalog-inbox-windows.ps1
 ```
 
-Manual activation-journal recovery is available, although normal receive invokes it automatically:
+One-shot watcher verification:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File F:\G-ACE-KB\repo\scripts\recover-modulecatalog-activation-windows.ps1
+  -File F:\G-ACE-KB\repo\scripts\watch-modulecatalog-kb-inbox-windows.ps1 `
+  -Once
 ```
 
-## Completion definition
+Deep Current health:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\check-modulecatalog-kb-runtime-windows.ps1 `
+  -Deep
+```
+
+Retention dry run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\prune-modulecatalog-kb-retention-windows.ps1 `
+  -DryRun
+```
+
+Scheduled receiver install/start:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1
+```
+
+## 18. Completion definition
 
 A transported Catalog payload is not operational merely because it was copied or ACCEPTED.
 
@@ -335,15 +383,17 @@ Completion requires:
 transport completeness proved before claim
 full cryptographic/semantic admission PASS
 projection schema v2 complete
-structured relationship/case hashes + counts intact
+structured relationships/cases retained with hashes + counts
 existing BM25 / Vector / Hybrid gates PASS
 existing Knowledge Graph gates PASS where applicable
+existing Knowledge regression PASS
 post-cutover MCP PASS on actual Current path
-ACTIVE receipt + Current marker + runtime-state agree
+ACTIVE receipt + marker + runtime-state agreement
 processed archive contains ACTIVE receipt + receiver diagnostics
-no unresolved activation transaction journal
-runtime health PASS
-continuous receiver configured to keep checking active health after deployment
+no unresolved activation transaction
+Current runtime health PASS
+continuous receiver configuration verified on the target PC
+bounded operational retention enabled
 no timed-out/orphan receiver process remains active
 ```
 
