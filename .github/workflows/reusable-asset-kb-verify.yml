@@ -47,7 +47,8 @@ jobs:
             'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1',
             'scripts/activate-modulecatalog-accepted-windows.ps1',
             'scripts/receive-modulecatalog-kbdata-windows.ps1',
-            'scripts/process-modulecatalog-inbox-windows.ps1'
+            'scripts/process-modulecatalog-inbox-windows.ps1',
+            'scripts/check-modulecatalog-kb-runtime-windows.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
