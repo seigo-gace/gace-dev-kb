@@ -10,7 +10,7 @@ $Repo = Join-Path $Root 'repo'
 $RuntimePython = Join-Path $Root 'runtime\mcp-vector-search\Scripts\python.exe'
 $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
 $SnapshotBuilder = Join-Path $Repo 'scripts\replace_modulecatalog_reusable_snapshot.py'
-$CorpusRenderer = Join-Path $Repo 'scripts\render_knowledge_corpus.py'
+$PreservedCorpusCopier = Join-Path $Repo 'scripts\copy_preserved_kb_runtime_corpus.py'
 $RuntimeLinkPrefixer = Join-Path $Repo 'scripts\prefix_modulecatalog_runtime_links.py'
 $SafetyPatch = Join-Path $Repo 'scripts\patch-mvs-windows-trial-safety.ps1'
 $RecoveryScript = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
@@ -41,7 +41,7 @@ $ActivationJournal = Join-Path $Root 'data\knowledge-intake\modulecatalog\activa
 $ReusableCorpusPrefix = 'accepted-modulecatalog-reusable-'
 $ModuleCatalogRepository = 'seigo-gace/modular-catalog'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$CorpusRenderer,$RuntimeLinkPrefixer,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewRelationships,$NewCases,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$PreservedCorpusCopier,$RuntimeLinkPrefixer,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewRelationships,$NewCases,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -165,10 +165,13 @@ New-Item -ItemType Directory -Path $StagingSearch -Force | Out-Null
 $init = Invoke-MvsCapture -Arguments @('init','--force','--extensions','.md','--no-auto-index','--no-mcp','--no-auto-indexing') -TimeoutSeconds 180
 if ($init.ExitCode -ne 0) { throw "STAGING_MVS_INIT_FAILED=$($init.ExitCode)" }
 
-& $RuntimePython -B $CorpusRenderer --input $BaseFormal --output-dir $StagingRecords
-if ($LASTEXITCODE -ne 0) { throw "BASE_CORPUS_RENDER_FAILED=$LASTEXITCODE" }
-$RenderedBaseCount = @(Get-ChildItem $StagingRecords -Filter '*.md' -File).Count
-if ($RenderedBaseCount -ne $BaseCount) { throw "BASE_CORPUS_COUNT_MISMATCH expected=$BaseCount actual=$RenderedBaseCount" }
+# Preserve every non-ModuleCatalog current corpus document byte-for-byte. This
+# avoids flattening any future rich accepted Knowledge that is not part of the
+# replaceable Catalog snapshot into the legacy eight-field renderer.
+& $RuntimePython -B $PreservedCorpusCopier --current $CurrentRecords --output $StagingRecords --expected-count $BaseCount
+if ($LASTEXITCODE -ne 0) { throw "PRESERVED_BASE_CORPUS_COPY_FAILED=$LASTEXITCODE" }
+$PreservedBaseCount = @(Get-ChildItem $StagingRecords -Filter '*.md' -File).Count
+if ($PreservedBaseCount -ne $BaseCount) { throw "BASE_CORPUS_COUNT_MISMATCH expected=$BaseCount actual=$PreservedBaseCount" }
 Remove-Item $BaseFormal -Force -ErrorAction SilentlyContinue
 
 $prefix = "$ReusableCorpusPrefix$($CatalogCommit.Substring(0,12))-"
@@ -208,7 +211,7 @@ Write-Host '=== STAGING MCP OPERATIONAL GATES ==='
 if ($LASTEXITCODE -ne 0) { throw "STAGING_HISTORY_MCP_FAILED=$LASTEXITCODE" }
 & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $StagingSearch --metadata $NewMetadata --expected-count $ExpectedRecordCount --timeout 180
 if ($LASTEXITCODE -ne 0) { throw "STAGING_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
-Write-Host "GACE_STAGING_RUNTIME=PASS TOTAL=$ExpectedTotal REUSABLE=$ExpectedRecordCount LEGACY_MODULECATALOG_ASSETS=RETIRED"
+Write-Host "GACE_STAGING_RUNTIME=PASS TOTAL=$ExpectedTotal REUSABLE=$ExpectedRecordCount LEGACY_MODULECATALOG_ASSETS=RETIRED PRESERVED_BASE=BYTE_EXACT"
 
 Write-Host '=== PREPARE STRUCTURED CURRENT SNAPSHOT ==='
 if (Test-Path $StagingReusableSnapshot) { Remove-Item $StagingReusableSnapshot -Recurse -Force }
