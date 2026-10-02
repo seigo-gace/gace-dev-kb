@@ -39,11 +39,26 @@ function Resolve-ProcessedArchivePath {
     $base = Join-Path $ProcessedRoot $Name
     if (-not (Test-Path $base)) { return $base }
     $existing = Get-Item $base -ErrorAction Stop
-    if (-not $existing.PSIsContainer) {
-        # A non-directory collision is an archive error, not a prior delivery.
-        return $base
-    }
+    if (-not $existing.PSIsContainer) { return $base }
     return Join-Path $ProcessedRoot ("{0}-replay-{1}-{2}" -f $Name,(Get-Date).ToString('yyyyMMdd-HHmmss'),([Guid]::NewGuid().ToString('N').Substring(0,8)))
+}
+function Stop-ReceiverProcessTree {
+    param([System.Diagnostics.Process]$Process)
+    if ($null -eq $Process) { return }
+    try { $Process.Refresh() } catch { return }
+    if ($Process.HasExited) { return }
+
+    $taskkill = Get-Command 'taskkill.exe' -ErrorAction SilentlyContinue
+    if ($env:OS -eq 'Windows_NT' -and $null -ne $taskkill) {
+        # The receiver can own MVS/Python grandchildren. Killing only the wrapper
+        # can leave the indexer alive against a runtime that the next retry tries
+        # to recover. taskkill /T closes the full receiver process tree.
+        & $taskkill.Source /PID $Process.Id /T /F 2>$null | Out-Null
+    }
+    else {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    }
+    try { $Process.WaitForExit(10000) | Out-Null } catch { }
 }
 function Get-DeliveryReadiness {
     param([System.IO.DirectoryInfo]$Directory)
@@ -194,8 +209,7 @@ try {
         if ($waitMilliseconds -gt [int]::MaxValue) { throw "RECEIVER_TIMEOUT_TOO_LARGE_SECONDS=$ReceiverTimeoutSeconds" }
         if (-not $process.WaitForExit([int]$waitMilliseconds)) {
             $retryable = $true
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            try { $process.WaitForExit(10000) | Out-Null } catch { }
+            Stop-ReceiverProcessTree -Process $process
             throw "MODULECATALOG_RECEIVER_TIMEOUT=${ReceiverTimeoutSeconds}s DELIVERY=$processingPath"
         }
         $process.Refresh()
@@ -258,9 +272,7 @@ try {
         throw $failure
     }
     finally {
-        if ($null -ne $process -and -not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        }
+        Stop-ReceiverProcessTree -Process $process
     }
 }
 finally {
