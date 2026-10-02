@@ -14,7 +14,8 @@ gace-dev-kb/
 │  ├─ PROJECT_TREE.md
 │  ├─ DESIGN_DELTA.md
 │  ├─ REUSABLE_ASSET_KB_CONTRACT.md
-│  └─ MODULECATALOG_KB_INTAKE_RUNTIME.md
+│  ├─ MODULECATALOG_KB_INTAKE_RUNTIME.md
+│  └─ MODULECATALOG_KB_RETENTION.md
 ├─ .github/workflows/
 │  └─ reusable-asset-kb-verify.yml
 ├─ scripts/
@@ -43,12 +44,13 @@ gace-dev-kb/
 │  ├─ activate-modulecatalog-accepted-windows.ps1
 │  ├─ recover-modulecatalog-activation-windows.ps1
 │  ├─ check-modulecatalog-kb-runtime-windows.ps1
+│  ├─ prune-modulecatalog-kb-retention-windows.ps1
 │  ├─ watch-modulecatalog-kb-inbox-windows.ps1
 │  ├─ configure-modulecatalog-kb-receiver-task-windows.ps1
 │  │
 │  ├─ run_modulecatalog_reusable_export.mjs          # producer compatibility test helper only
 │  ├─ test-modulecatalog-reusable-export-windows.ps1 # isolated/contract test helper
-│  └─ promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1 # pre-runtime transition helper; not inbox runtime entry
+│  └─ promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1 # transition helper; not inbox runtime entry
 ├─ tests/
 │  ├─ verify-mvs-windows.ps1
 │  ├─ regression-mvs-windows.ps1
@@ -75,17 +77,19 @@ gace-dev-kb/
 │  ├─ test_modulecatalog_duplicate_delivery_archive.ps1
 │  ├─ test_modulecatalog_activation_recovery.ps1
 │  ├─ test_modulecatalog_runtime_health_lock.ps1
-│  └─ test_modulecatalog_receiver_service.ps1
+│  ├─ test_modulecatalog_receiver_service.ps1
+│  ├─ test_modulecatalog_receiver_backoff.ps1
+│  └─ test_modulecatalog_retention.ps1
 └─ .gitignore                  # local untracked evidence on Master PC; intentionally untouched
 ```
 
 ## Entry documents
 
 ### `README.md`
-Mandatory entry point. Separates historical Master-PC validated baseline from the generalized transported-asset branch status.
+Mandatory entry point. Separates the historical Master-PC validated baseline from the generalized transported-asset receive/runtime status.
 
 ### `docs/CURRENT_DESIGN.md`
-Current design baseline. Defines producer/consumer authority, single-Current runtime, projection v2, transport lifecycle, activation/rollback and health boundaries.
+Current design baseline. Defines producer/consumer authority, single-Current runtime, projection v2, transport lifecycle, activation/rollback, continuous receiver, health and retention boundaries.
 
 ### `docs/DESIGN_DELTA.md`
 Historical design-change record. Do not rewrite older evidence merely because the current design moved forward.
@@ -94,7 +98,10 @@ Historical design-change record. Do not rewrite older evidence merely because th
 Detailed `gace.reusable-asset.v1` consumer contract: data semantics, admission, runtime projection, Current authority and completion definition.
 
 ### `docs/MODULECATALOG_KB_INTAKE_RUNTIME.md`
-Operational Windows receive-to-runtime specification: inbox lifecycle, locks, timeout/retry, receiver service, activation transaction and health commands.
+Operational Windows receive-to-runtime specification: inbox lifecycle, locks, timeout/retry, receiver service, activation transaction, graph projection, health and retention commands.
+
+### `docs/MODULECATALOG_KB_RETENTION.md`
+Bounded operational backup/archive policy. Defines protected Current/rollback authority, retention counts, safe-root deletion boundaries and dry-run behavior.
 
 ## Baseline repository/history path
 
@@ -119,7 +126,7 @@ Install/repair/verify measured MVS Windows compatibility and bounded trial/runti
 ## Legacy verified-source path
 
 ### `config/accepted-knowledge-sources.json`
-Explicit legacy accepted-source registry used by the already-validated 13-record DebugAI source path. It is not the generalized ModuleCatalog transport inbox.
+Legacy accepted-source registry used by the already-validated 13-record DebugAI source path. It is not the generalized ModuleCatalog transport inbox.
 
 ### `scripts/import_verified_modulecatalog_skills.py`
 Conservative importer for the previously verified 13 exported symbols.
@@ -133,22 +140,22 @@ Isolated real-Windows reusable retrieval proof for the legacy 13-record source.
 ## Generalized ModuleCatalog reusable-asset receive path
 
 ### `scripts/import_modulecatalog_reusable_export.py`
-Authoritative `gace.reusable-asset.v1` consumer/importer. Re-verifies manifests/hashes/schema/provenance/cardinality/relations and builds rich Knowledge Unit metadata + compatibility records + Markdown corpus.
+`gace.reusable-asset.v1` consumer/importer. Re-verifies manifests/hashes/schema/provenance/cardinality/relations and builds rich Knowledge Unit metadata + compatibility records + Markdown corpus.
 
 ### `scripts/import_reusable_asset_bundle.py`
 Generic reusable-asset bundle compatibility importer used by contract/regression coverage.
 
 ### `scripts/accept_modulecatalog_delivery.py`
-KB admission boundary for an already-transported delivery. Produces projection schema v2 and an ACCEPTED receipt/state only after full validation. Replays are revalidated instead of trusting cached authority.
+KB admission boundary for an already-transported delivery. Produces projection schema v2 and an ACCEPTED receipt/state only after full validation. Replays are revalidated rather than trusting cached authority.
 
 ### `scripts/enrich_modulecatalog_search_corpus.py`
-Adds runtime-only MVS frontmatter/tags/related links to the local derived corpus. Canonical transported files remain unchanged.
+Adds runtime-only MVS frontmatter/tags/related links to the local derived corpus. It consults the full accepted relationship sidecar so Asset-level/future relation kinds are not limited to relations embedded by the importer. Canonical transported files remain unchanged.
 
 ### `scripts/copy_preserved_kb_runtime_corpus.py`
 Copies the existing non-Catalog runtime corpus into staging without degrading rich existing Markdown content.
 
 ### `scripts/prefix_modulecatalog_runtime_links.py`
-Rewrites runtime-only `related:` link targets after Catalog filename prefixing so MVS KG links resolve in the staged/current corpus.
+Rewrites runtime-only `related:` targets after Catalog filename prefixing so MVS KG links resolve in the staged/current corpus.
 
 ### `scripts/replace_modulecatalog_reusable_snapshot.py`
 Builds the next formal record set while keeping one Current ModuleCatalog reusable snapshot and preserving non-Catalog knowledge.
@@ -157,7 +164,7 @@ Builds the next formal record set while keeping one Current ModuleCatalog reusab
 One-delivery receive orchestrator. Owns `receive.lock`, recovery-before-activation, stale replay rejection, idempotent ACTIVE deep health, activation and final Current health.
 
 ### `scripts/process-modulecatalog-inbox-windows.ps1`
-Standard inbox processor. Owns transport-completeness preflight, `ready → processing`, resume/retry/failure/processed archive lifecycle, bounded receiver timeout, Windows process-tree termination, duplicate delivery replay archive preservation and processor serialization.
+Standard inbox processor. Owns transport-completeness preflight, `ready → processing`, resume/retry/failure/processed archive lifecycle, bounded receiver timeout, Windows process-tree termination, duplicate delivery replay preservation and processor serialization.
 
 ### `scripts/activate-modulecatalog-accepted-windows.ps1`
 Uses the existing BM25/Vector/KG/MCP runtime to build staging, run regressions, replace Current atomically, preserve structured relationship/case authority and perform post-cutover MCP verification.
@@ -168,11 +175,14 @@ Resolves an interrupted PREPARED activation transaction before another activatio
 ### `scripts/check-modulecatalog-kb-runtime-windows.ps1`
 Non-mutating Current integrity/health gate. `-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP checks.
 
+### `scripts/prune-modulecatalog-kb-retention-windows.ps1`
+Serialized operational cleanup. Bounds rollback/search backups and processed/failed/accepted archives while protecting Current and immediate rollback authority and refusing deletion outside approved data roots.
+
 ### `scripts/watch-modulecatalog-kb-inbox-windows.ps1`
-Continuous singleton inbox consumer with heartbeat/failure JSONL and bounded log rotation.
+Continuous singleton inbox consumer with heartbeat/failure JSONL, bounded rotation, retry backoff, periodic Current health and periodic retention.
 
 ### `scripts/configure-modulecatalog-kb-receiver-task-windows.ps1`
-Windows scheduled-task installer source. Registers a current-user Limited AtLogOn receiver with bounded restart behavior. Repository presence does not mean the Master-PC task is installed.
+Windows Scheduled Task installer source. Registers a current-user Limited AtLogOn receiver with persisted health/retention policy and bounded restart behavior. Repository presence does not mean the Master-PC task is installed.
 
 ## Producer compatibility helpers — not operational receive path
 
@@ -183,7 +193,7 @@ Invokes the ModuleCatalog producer for CI/compatibility testing at an exact comm
 Earlier isolated Windows producer/consumer trial helper. Not the unattended inbox entry.
 
 ### `scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1`
-Transition-era promotion helper retained for regression/history. The current design's operational entry is transported delivery → receive/inbox lifecycle.
+Transition-era promotion helper retained for regression/history. The current operational entry is transported delivery → receive/inbox lifecycle.
 
 ## Generalized receive/runtime tests
 
@@ -209,14 +219,20 @@ Proves duplicate delivery ID replay preserves the original processed archive.
 Hard-interruption PREPARED transaction recovery tests.
 
 ### `tests/test_modulecatalog_runtime_health_lock.ps1`
-Verifies runtime health/receive lock ownership and internal inherited-lock mode.
+Verifies runtime health/receive lock ownership and inherited-lock mode.
 
 ### `tests/test_modulecatalog_receiver_service.ps1`
-Continuous receiver one-shot/singleton/log-rotation behavior.
+Continuous receiver one-shot/singleton/log-rotation/health behavior.
+
+### `tests/test_modulecatalog_receiver_backoff.ps1`
+Proves a transient polling failure backs off before the next attempt instead of hot-looping.
+
+### `tests/test_modulecatalog_retention.ps1`
+Proves bounded operational retention, stale scratch cleanup, idempotency, Current protection and immediate reusable rollback protection including older ACTIVE-marker schema.
 
 ### Search projection tests
 
-- `tests/test_enrich_modulecatalog_search_corpus.py` — frontmatter, relation/dependency projection.
+- `tests/test_enrich_modulecatalog_search_corpus.py` — frontmatter, dependency/containment/cross-unit/full-sidecar relationship projection.
 - `tests/test_copy_preserved_kb_runtime_corpus.py` — non-Catalog rich-corpus preservation.
 - `tests/test_prefix_modulecatalog_runtime_links.py` — runtime link target alignment.
 - `tests/test_replace_modulecatalog_reusable_snapshot.py` — single-Current record replacement and legacy transition.
@@ -225,7 +241,7 @@ Continuous receiver one-shot/singleton/log-rotation behavior.
 ## Workflow
 
 ### `.github/workflows/reusable-asset-kb-verify.yml`
-Feature-branch CI. Covers syntax, transport/inbox reliability, activation recovery, receiver service, projection/search regressions, legacy KB regressions and a pinned real ModuleCatalog producer compatibility contract.
+Feature-branch CI. Covers syntax, transport/inbox reliability, activation recovery, receiver service/backoff/retention, projection/search regressions, legacy KB regressions, pinned real ModuleCatalog producer compatibility, and an actual Windows Scheduled Task installation/startup/uninstall gate.
 
 CI is not a substitute for the final genuine-transport Master-PC MVS runtime gate.
 
