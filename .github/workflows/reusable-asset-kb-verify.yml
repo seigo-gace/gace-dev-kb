@@ -93,6 +93,7 @@ jobs:
             throw "MULTIPLE_READY_GATE_WRONG_FAILURE=$($output -join ' | ')"
           }
           Write-Host 'GACE_MODULECATALOG_INBOX_FAIL_CLOSED=PASS'
+          exit 0
 
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
