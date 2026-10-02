@@ -118,6 +118,29 @@ class ModuleCatalogSearchCorpusEnrichmentTests(unittest.TestCase):
         self.assertIn("related:\n  - \"0002-asset-a-logic.md\"", discovery)
         self.assertIn('"relation-contains"', child)
 
+    def test_full_sidecar_projects_asset_level_future_relationship(self):
+        rows = [self.row("asset-a"), self.row("asset-b")]
+        self.write_fixture(rows)
+        relationship = {
+            "schema_version": 1,
+            "relationship_id": "asset-a::alternative_to::asset-b",
+            "from": "asset-a",
+            "relation": "alternative_to",
+            "to": "asset-b",
+            "verified": True,
+        }
+        (self.root / "relationships.jsonl").write_text(
+            json.dumps(relationship) + "\n", encoding="utf-8"
+        )
+
+        self.assertEqual(enrich(self.metadata, self.corpus), 2)
+        source = (self.corpus / "0001-asset-a-discovery.md").read_text(encoding="utf-8")
+        target = (self.corpus / "0002-asset-b-discovery.md").read_text(encoding="utf-8")
+        self.assertIn('"relation-alternative_to"', source)
+        self.assertIn('"relationship-id-asset-a-alternative_to-asset-b"', source)
+        self.assertIn("related:\n  - \"0002-asset-b-discovery.md\"", source)
+        self.assertIn('"relation-alternative_to"', target)
+
     def test_does_not_infer_contains_without_producer_relationship(self):
         rows = [
             self.row("asset-a"),
