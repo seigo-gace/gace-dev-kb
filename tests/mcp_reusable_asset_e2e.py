@@ -172,6 +172,15 @@ def build_server_env(root: Path):
     return env
 
 
+def build_server(python: Path, root: Path):
+    return StdioServerParameters(
+        command=str(python),
+        args=["-m", "mcp_vector_search.mcp", str(root)],
+        env=build_server_env(root),
+        cwd=str(root),
+    )
+
+
 async def wait(awaitable, seconds, label):
     try:
         async with asyncio.timeout(seconds):
@@ -236,171 +245,38 @@ async def kg_tag_require(session, *, tag: str, timeout: int, label: str):
     return results
 
 
-async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: int):
-    rows = load(metadata)
-    if len(rows) != expected:
-        raise RuntimeError(
-            f"REUSABLE_ASSET_COUNT_MISMATCH expected={expected} actual={len(rows)}"
-        )
-
-    ids = [str(row.get("knowledge_id") or "") for row in rows]
-    if any(not value for value in ids):
-        raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_MISSING")
-    if len(set(ids)) != len(ids):
-        raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_DUPLICATE")
-
-    relationships_path = metadata.parent / "relationships.jsonl"
-    cases_path = metadata.parent / "cases.jsonl"
-    relationships = load_optional_jsonl(relationships_path, "REUSABLE_RELATIONSHIP")
-    cases = load_optional_jsonl(cases_path, "REUSABLE_CASE")
-    sidecar_case_probe = case_probe(rows, cases) if cases else None
-    sidecar_relationship_probe = relationship_probe(rows, relationships) if relationships else None
-    if cases and sidecar_case_probe is None:
-        raise RuntimeError("REUSABLE_CASE_SIDECAR_NO_SEARCHABLE_TARGET")
-    if relationships and sidecar_relationship_probe is None:
-        raise RuntimeError("REUSABLE_RELATIONSHIP_SIDECAR_NO_SEARCHABLE_TARGET")
-    dependency_probe = first_dependency_probe(rows)
-
-    env = build_server_env(root)
-    if os.name == "nt":
-        print(
-            "MCP_REUSABLE_WINDOWS_SAFETY=PASS "
-            "MULTIPROCESSING=DISABLED WORKERS=1 EMBEDDING_BATCH=8 "
-            "FILE_BATCH=16 NATIVE_THREADS=1"
-        )
-    server = StdioServerParameters(
-        command=str(python),
-        args=["-m", "mcp_vector_search.mcp", str(root)],
-        env=env,
-        cwd=str(root),
-    )
-
-    kind_first = {}
-    asset_ids = set()
-    natural = vector = hybrid = 0
-    case_checks = relationship_checks = 0
-    kg_relation_checks = kg_dependency_checks = 0
-
+async def run_kg_gates(
+    python: Path,
+    root: Path,
+    *,
+    timeout: int,
+    relationship_checks: int,
+    relationship,
+    relationship_id: str,
+    case_checks: int,
+    case_id: str,
+    dependency_probe,
+):
+    kg_relation_checks = 0
+    kg_dependency_checks = 0
+    server = build_server(python, root)
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         try:
             async with stdio_client(server, errlog=errlog) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
-                    init = await wait(session.initialize(), timeout, "MCP_INITIALIZE")
+                    init = await wait(session.initialize(), timeout, "MCP_KG_INITIALIZE")
                     info = getattr(init, "server_info", None) or getattr(init, "serverInfo", None)
                     if not info:
-                        raise RuntimeError("MCP_SERVER_INFO_MISSING")
-                    tools = await wait(session.list_tools(), timeout, "MCP_LIST_TOOLS")
+                        raise RuntimeError("MCP_KG_SERVER_INFO_MISSING")
+                    tools = await wait(session.list_tools(), timeout, "MCP_KG_LIST_TOOLS")
                     names = {tool.name for tool in tools.tools}
-                    missing = REQUIRED_TOOLS - names
+                    missing = {"kg_stats", "kg_query"} - names
                     if missing:
                         raise RuntimeError(
-                            "MCP_REUSABLE_REQUIRED_TOOLS_MISSING=" + ",".join(sorted(missing))
+                            "MCP_REUSABLE_KG_REQUIRED_TOOLS_MISSING="
+                            + ",".join(sorted(missing))
                         )
-                    print(f"MCP_REUSABLE_INITIALIZE=PASS TOOLS={len(names)}")
-
-                    for index, row in enumerate(rows, 1):
-                        knowledge_id = str(row["knowledge_id"])
-                        parent_asset_id = str(row.get("parent_asset_id") or "")
-                        if not parent_asset_id:
-                            raise RuntimeError(f"REUSABLE_ASSET_PARENT_ID_MISSING={knowledge_id}")
-                        asset_ids.add(parent_asset_id)
-                        knowledge_kind = str(row.get("knowledge_kind") or "unknown")
-                        kind_first.setdefault(knowledge_kind, row)
-                        await search_and_require(
-                            session,
-                            query=knowledge_id,
-                            knowledge_id=knowledge_id,
-                            mode="bm25",
-                            timeout=timeout,
-                            label=f"MCP_REUSABLE_BM25_{knowledge_id}",
-                            result_limit=EXACT_SEARCH_LIMIT,
-                        )
-                        if index % 50 == 0 or index == len(rows):
-                            print(
-                                f"MCP_REUSABLE_EXACT_BM25_PROGRESS={index}/{len(rows)} "
-                                f"LIMIT={EXACT_SEARCH_LIMIT}"
-                            )
-                    print(
-                        f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} "
-                        f"ASSETS={len(asset_ids)} LIMIT={EXACT_SEARCH_LIMIT}"
-                    )
-
-                    case_id = ""
-                    if sidecar_case_probe is not None:
-                        case_row, _case, case_id = sidecar_case_probe
-                        await search_and_require(
-                            session,
-                            query=case_id,
-                            knowledge_id=str(case_row["knowledge_id"]),
-                            mode="bm25",
-                            timeout=timeout,
-                            label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
-                            result_limit=SIDECAR_SEARCH_LIMIT,
-                        )
-                        case_checks = 1
-                        print(
-                            f"MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASE={case_id} "
-                            f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
-                        )
-                    else:
-                        print(
-                            "MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS "
-                            "CASES=0 SKIP=NO_CASE_SIDECAR"
-                        )
-
-                    relationship = None
-                    relationship_id = ""
-                    if sidecar_relationship_probe is not None:
-                        relationship_row, relationship, relationship_id = sidecar_relationship_probe
-                        await search_and_require(
-                            session,
-                            query=relationship_id,
-                            knowledge_id=str(relationship_row["knowledge_id"]),
-                            mode="bm25",
-                            timeout=timeout,
-                            label=f"MCP_REUSABLE_SIDECAR_RELATIONSHIP_{relationship_id}",
-                            result_limit=SIDECAR_SEARCH_LIMIT,
-                        )
-                        relationship_checks = 1
-                        print(
-                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
-                            f"RELATIONSHIP={relationship_id} ID={relationship_row['knowledge_id']} "
-                            f"SIDECAR={len(relationships)}"
-                        )
-                    else:
-                        print(
-                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
-                            "RELATIONSHIPS=0 SKIP=NO_RELATIONSHIP_SIDECAR"
-                        )
-
-                    for knowledge_kind, row in sorted(kind_first.items()):
-                        query = natural_query(row)
-                        knowledge_id = str(row["knowledge_id"])
-                        if not query:
-                            raise RuntimeError(
-                                f"MCP_REUSABLE_NATURAL_QUERY_EMPTY "
-                                f"kind={knowledge_kind} id={knowledge_id}"
-                            )
-                        for mode in ("bm25", "vector", "hybrid"):
-                            await search_and_require(
-                                session,
-                                query=query,
-                                knowledge_id=knowledge_id,
-                                mode=mode,
-                                timeout=timeout,
-                                label=f"MCP_REUSABLE_{mode.upper()}_{knowledge_kind}",
-                                result_limit=NATURAL_SEARCH_LIMIT,
-                            )
-                            if mode == "bm25":
-                                natural += 1
-                            elif mode == "vector":
-                                vector += 1
-                            else:
-                                hybrid += 1
-                        print(
-                            f"MCP_REUSABLE_MULTI_MODE_SEARCH=PASS KIND={knowledge_kind} "
-                            f"ID={knowledge_id} MODES=bm25,vector,hybrid"
-                        )
+                    print(f"MCP_REUSABLE_KG_SESSION_INITIALIZE=PASS TOOLS={len(names)}")
 
                     kg_stats = await wait(
                         session.call_tool("kg_stats", arguments={}),
@@ -501,6 +377,209 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
             if stderr:
                 print(stderr, file=sys.stderr)
             raise
+    return kg_relation_checks, kg_dependency_checks
+
+
+async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: int):
+    rows = load(metadata)
+    if len(rows) != expected:
+        raise RuntimeError(
+            f"REUSABLE_ASSET_COUNT_MISMATCH expected={expected} actual={len(rows)}"
+        )
+
+    ids = [str(row.get("knowledge_id") or "") for row in rows]
+    if any(not value for value in ids):
+        raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_MISSING")
+    if len(set(ids)) != len(ids):
+        raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_DUPLICATE")
+
+    relationships_path = metadata.parent / "relationships.jsonl"
+    cases_path = metadata.parent / "cases.jsonl"
+    relationships = load_optional_jsonl(relationships_path, "REUSABLE_RELATIONSHIP")
+    cases = load_optional_jsonl(cases_path, "REUSABLE_CASE")
+    sidecar_case_probe = case_probe(rows, cases) if cases else None
+    sidecar_relationship_probe = relationship_probe(rows, relationships) if relationships else None
+    if cases and sidecar_case_probe is None:
+        raise RuntimeError("REUSABLE_CASE_SIDECAR_NO_SEARCHABLE_TARGET")
+    if relationships and sidecar_relationship_probe is None:
+        raise RuntimeError("REUSABLE_RELATIONSHIP_SIDECAR_NO_SEARCHABLE_TARGET")
+    dependency_probe = first_dependency_probe(rows)
+
+    if os.name == "nt":
+        print(
+            "MCP_REUSABLE_WINDOWS_SAFETY=PASS "
+            "MULTIPROCESSING=DISABLED WORKERS=1 EMBEDDING_BATCH=8 "
+            "FILE_BATCH=16 NATIVE_THREADS=1"
+        )
+
+    kind_first = {}
+    asset_ids = set()
+    natural = vector = hybrid = 0
+    case_checks = relationship_checks = 0
+    relationship = None
+    relationship_id = ""
+    case_id = ""
+
+    # Search and KG use separate MCP processes. On Windows, search operations can
+    # keep a Kuzu handle for the lifetime of the server process. Closing that
+    # process before KG queries guarantees one fresh owner of the graph database.
+    search_server = build_server(python, root)
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
+        try:
+            async with stdio_client(search_server, errlog=errlog) as (
+                read_stream,
+                write_stream,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    init = await wait(session.initialize(), timeout, "MCP_INITIALIZE")
+                    info = getattr(init, "server_info", None) or getattr(init, "serverInfo", None)
+                    if not info:
+                        raise RuntimeError("MCP_SERVER_INFO_MISSING")
+                    tools = await wait(session.list_tools(), timeout, "MCP_LIST_TOOLS")
+                    names = {tool.name for tool in tools.tools}
+                    missing = REQUIRED_TOOLS - names
+                    if missing:
+                        raise RuntimeError(
+                            "MCP_REUSABLE_REQUIRED_TOOLS_MISSING="
+                            + ",".join(sorted(missing))
+                        )
+                    print(f"MCP_REUSABLE_INITIALIZE=PASS TOOLS={len(names)}")
+
+                    for index, row in enumerate(rows, 1):
+                        knowledge_id = str(row["knowledge_id"])
+                        parent_asset_id = str(row.get("parent_asset_id") or "")
+                        if not parent_asset_id:
+                            raise RuntimeError(
+                                f"REUSABLE_ASSET_PARENT_ID_MISSING={knowledge_id}"
+                            )
+                        asset_ids.add(parent_asset_id)
+                        knowledge_kind = str(row.get("knowledge_kind") or "unknown")
+                        kind_first.setdefault(knowledge_kind, row)
+                        await search_and_require(
+                            session,
+                            query=knowledge_id,
+                            knowledge_id=knowledge_id,
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_BM25_{knowledge_id}",
+                            result_limit=EXACT_SEARCH_LIMIT,
+                        )
+                        if index % 50 == 0 or index == len(rows):
+                            print(
+                                f"MCP_REUSABLE_EXACT_BM25_PROGRESS={index}/{len(rows)} "
+                                f"LIMIT={EXACT_SEARCH_LIMIT}"
+                            )
+                    print(
+                        f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} "
+                        f"ASSETS={len(asset_ids)} LIMIT={EXACT_SEARCH_LIMIT}"
+                    )
+
+                    if sidecar_case_probe is not None:
+                        case_row, _case, case_id = sidecar_case_probe
+                        await search_and_require(
+                            session,
+                            query=case_id,
+                            knowledge_id=str(case_row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
+                            result_limit=SIDECAR_SEARCH_LIMIT,
+                        )
+                        case_checks = 1
+                        print(
+                            f"MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASE={case_id} "
+                            f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
+                        )
+                    else:
+                        print(
+                            "MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS "
+                            "CASES=0 SKIP=NO_CASE_SIDECAR"
+                        )
+
+                    if sidecar_relationship_probe is not None:
+                        relationship_row, relationship, relationship_id = (
+                            sidecar_relationship_probe
+                        )
+                        await search_and_require(
+                            session,
+                            query=relationship_id,
+                            knowledge_id=str(relationship_row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=(
+                                "MCP_REUSABLE_SIDECAR_RELATIONSHIP_"
+                                f"{relationship_id}"
+                            ),
+                            result_limit=SIDECAR_SEARCH_LIMIT,
+                        )
+                        relationship_checks = 1
+                        print(
+                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
+                            f"RELATIONSHIP={relationship_id} "
+                            f"ID={relationship_row['knowledge_id']} "
+                            f"SIDECAR={len(relationships)}"
+                        )
+                    else:
+                        print(
+                            "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
+                            "RELATIONSHIPS=0 SKIP=NO_RELATIONSHIP_SIDECAR"
+                        )
+
+                    for knowledge_kind, row in sorted(kind_first.items()):
+                        query = natural_query(row)
+                        knowledge_id = str(row["knowledge_id"])
+                        if not query:
+                            raise RuntimeError(
+                                "MCP_REUSABLE_NATURAL_QUERY_EMPTY "
+                                f"kind={knowledge_kind} id={knowledge_id}"
+                            )
+                        for mode in ("bm25", "vector", "hybrid"):
+                            await search_and_require(
+                                session,
+                                query=query,
+                                knowledge_id=knowledge_id,
+                                mode=mode,
+                                timeout=timeout,
+                                label=f"MCP_REUSABLE_{mode.upper()}_{knowledge_kind}",
+                                result_limit=NATURAL_SEARCH_LIMIT,
+                            )
+                            if mode == "bm25":
+                                natural += 1
+                            elif mode == "vector":
+                                vector += 1
+                            else:
+                                hybrid += 1
+                        print(
+                            f"MCP_REUSABLE_MULTI_MODE_SEARCH=PASS KIND={knowledge_kind} "
+                            f"ID={knowledge_id} MODES=bm25,vector,hybrid"
+                        )
+
+            errlog.flush()
+            errlog.seek(0)
+            stderr = errlog.read()
+            if "Could not find entity matching" in stderr:
+                raise RuntimeError("MCP_DOC_ONLY_KG_ENTITY_WARNING_PRESENT")
+        except BaseException:
+            errlog.flush()
+            errlog.seek(0)
+            stderr = errlog.read().strip()
+            if stderr:
+                print(stderr, file=sys.stderr)
+            raise
+
+    print("MCP_REUSABLE_SEARCH_SESSION=PASS CLOSED=YES")
+
+    kg_relation_checks, kg_dependency_checks = await run_kg_gates(
+        python,
+        root,
+        timeout=timeout,
+        relationship_checks=relationship_checks,
+        relationship=relationship,
+        relationship_id=relationship_id,
+        case_checks=case_checks,
+        case_id=case_id,
+        dependency_probe=dependency_probe,
+    )
 
     print(
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
