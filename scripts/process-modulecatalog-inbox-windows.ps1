@@ -2,7 +2,7 @@ param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$InboxRoot = '',
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
-    [ValidateRange(60,86400)][int]$ReceiverTimeoutSeconds = 7200
+    [ValidateRange(1,86400)][int]$ReceiverTimeoutSeconds = 7200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +33,17 @@ function Write-JsonUtf8 {
 function Unique-FailedPath {
     param([string]$Name)
     return Join-Path $FailedRoot ("{0}-{1}-{2}" -f $Name,(Get-Date).ToString('yyyyMMdd-HHmmss'),([Guid]::NewGuid().ToString('N').Substring(0,8)))
+}
+function Resolve-ProcessedArchivePath {
+    param([string]$Name)
+    $base = Join-Path $ProcessedRoot $Name
+    if (-not (Test-Path $base)) { return $base }
+    $existing = Get-Item $base -ErrorAction Stop
+    if (-not $existing.PSIsContainer) {
+        # A non-directory collision is an archive error, not a prior delivery.
+        return $base
+    }
+    return Join-Path $ProcessedRoot ("{0}-replay-{1}-{2}" -f $Name,(Get-Date).ToString('yyyyMMdd-HHmmss'),([Guid]::NewGuid().ToString('N').Substring(0,8)))
 }
 function Get-DeliveryReadiness {
     param([System.IO.DirectoryInfo]$Directory)
@@ -130,6 +141,7 @@ try {
 
     $deliveryName = $null
     $processingPath = $null
+    $processedPath = $null
     $resumed = $false
     if ($ProcessingDeliveries.Count -eq 1) {
         $processingPath = $ProcessingDeliveries[0].FullName
@@ -157,15 +169,13 @@ try {
         $delivery = $Deliveries[0]
         $deliveryName = $delivery.Name
         $processingPath = Join-Path $ProcessingRoot $deliveryName
-        $processedPath = Join-Path $ProcessedRoot $deliveryName
         if (Test-Path $processingPath) { throw "PROCESSING_DELIVERY_ALREADY_EXISTS=$processingPath" }
-        if (Test-Path $processedPath) { throw "PROCESSED_DELIVERY_ALREADY_EXISTS=$processedPath" }
         Write-Host "=== CLAIM DELIVERY: $deliveryName ==="
         Move-Item $delivery.FullName $processingPath
     }
 
-    $processedPath = Join-Path $ProcessedRoot $deliveryName
-    if (Test-Path $processedPath) { throw "PROCESSED_DELIVERY_ALREADY_EXISTS=$processedPath" }
+    $processedPath = Resolve-ProcessedArchivePath -Name $deliveryName
+    if (Test-Path $processedPath) { throw "PROCESSED_DELIVERY_ARCHIVE_COLLISION=$processedPath" }
 
     $attemptTag = "{0}-{1}" -f (Get-Date).ToString('yyyyMMdd-HHmmss'),([Guid]::NewGuid().ToString('N').Substring(0,8))
     $receiverStdoutName = "kb-receiver-$attemptTag.stdout.log"
