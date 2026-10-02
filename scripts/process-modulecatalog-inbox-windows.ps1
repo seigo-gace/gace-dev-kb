@@ -42,10 +42,6 @@ function Get-DeliveryReadiness {
         return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason='NO_MANIFEST' }
     }
 
-    # The final receiver owns semantic/integrity rejection. This preflight has a
-    # narrower job: do not claim a directory while transport is visibly incomplete.
-    # Malformed manifests are considered claimable so admission can archive them as
-    # FAILED instead of leaving them pending forever.
     try { $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json }
     catch { return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='MANIFEST_PRESENT_UNREADABLE' } }
 
@@ -88,9 +84,6 @@ function Get-DeliveryReadiness {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_INVALID:$assetId" }
             }
 
-            # Never let preflight follow a manifest path outside the delivery tree.
-            # Unsafe paths are claimable only so the authoritative admission gate can
-            # reject/archive them without this lightweight probe touching the target.
             $normalizedRelative = $relative -replace '/', '\'
             if ([System.IO.Path]::IsPathRooted($normalizedRelative) -or $normalizedRelative -match '(^|\\)\.\.(\\|$)') {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_UNSAFE:${assetId}:$relative" }
@@ -111,10 +104,8 @@ function Get-DeliveryReadiness {
             }
             $actualSize = (Get-Item $targetFull).Length
             if ($actualSize -lt $expectedSize) {
-                return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="BUNDLE_FILE_STILL_COPYING:${assetId}:$relative:$actualSize/$expectedSize" }
+                return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="BUNDLE_FILE_STILL_COPYING:${assetId}:${relative}:$actualSize/$expectedSize" }
             }
-            # A file larger than declared is not a transport-in-progress signal;
-            # claim it and let the cryptographic admission gate reject it as corrupt.
         }
     }
 
