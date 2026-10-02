@@ -5,6 +5,7 @@ param(
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
+    [ValidateRange(0,604800)][int]$DeepRuntimeHealthSeconds = 21600,
     [ValidateRange(0,604800)][int]$RetentionSeconds = 3600,
     [ValidateRange(1,50)][int]$KeepActivationBackups = 3,
     [ValidateRange(1,500)][int]$KeepProcessedDeliveries = 20,
@@ -27,7 +28,7 @@ $StopPath = Join-Path $IntakeRoot 'receiver.stop'
 $ServiceLockPath = Join-Path $IntakeRoot 'receiver-service.lock'
 
 $required = @($Repo,$Processor,$Python)
-if ($RuntimeHealthSeconds -gt 0) { $required += $HealthCheck }
+if ($RuntimeHealthSeconds -gt 0 -or $DeepRuntimeHealthSeconds -gt 0) { $required += $HealthCheck }
 if ($RetentionSeconds -gt 0) { $required += $Retention }
 foreach ($path in $required) {
     if (-not (Test-Path $path)) { throw "RECEIVER_SERVICE_REQUIRED_PATH_MISSING=$path" }
@@ -89,12 +90,13 @@ try {
         finally { $stream.Dispose() }
     }
 
-    $startMessage = "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds RuntimeHealthSeconds=$RuntimeHealthSeconds RetentionSeconds=$RetentionSeconds KeepActivationBackups=$KeepActivationBackups KeepProcessedDeliveries=$KeepProcessedDeliveries KeepFailedDeliveries=$KeepFailedDeliveries KeepAcceptedSnapshots=$KeepAcceptedSnapshots Once=$Once Host=$PowerShellHost"
+    $startMessage = "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds RuntimeHealthSeconds=$RuntimeHealthSeconds DeepRuntimeHealthSeconds=$DeepRuntimeHealthSeconds RetentionSeconds=$RetentionSeconds KeepActivationBackups=$KeepActivationBackups KeepProcessedDeliveries=$KeepProcessedDeliveries KeepFailedDeliveries=$KeepFailedDeliveries KeepAcceptedSnapshots=$KeepAcceptedSnapshots Once=$Once Host=$PowerShellHost"
     Write-ServiceEvent -Status 'STARTED' -Message $startMessage
     Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED $startMessage"
 
     $LastPassLogUtc = [DateTime]::MinValue
     $LastHealthUtc = [DateTime]::MinValue
+    $LastDeepHealthUtc = [DateTime]::MinValue
     $LastRetentionUtc = [DateTime]::MinValue
     while ($true) {
         if (Test-Path $StopPath) {
@@ -117,6 +119,20 @@ try {
                 Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=HEALTH_PASS MARKER=$ActivationMarker"
             }
 
+            # Shallow health proves authority/hash/index integrity. A separate,
+            # lower-frequency deep gate actually reopens MCP and exercises history,
+            # BM25, Vector, Hybrid and KG retrieval so a long-lived runtime cannot
+            # remain 'healthy' merely because files and index counts still exist.
+            $now = [DateTime]::UtcNow
+            if ($DeepRuntimeHealthSeconds -gt 0 -and (Test-Path $ActivationMarker) -and (($now - $LastDeepHealthUtc).TotalSeconds -ge $DeepRuntimeHealthSeconds)) {
+                & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $HealthCheck -Root $Root -Deep
+                if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_RUNTIME_DEEP_HEALTH_FAILED=$LASTEXITCODE" }
+                $LastDeepHealthUtc = [DateTime]::UtcNow
+                $LastHealthUtc = $LastDeepHealthUtc
+                Write-ServiceEvent -Status 'DEEP_HEALTH_PASS' -Message "Active KB runtime deep MCP health passed. Marker=$ActivationMarker"
+                Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=DEEP_HEALTH_PASS MARKER=$ActivationMarker"
+            }
+
             $now = [DateTime]::UtcNow
             if ($RetentionSeconds -gt 0 -and (($now - $LastRetentionUtc).TotalSeconds -ge $RetentionSeconds)) {
                 & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $Retention -Root $Root -KeepActivationBackups $KeepActivationBackups -KeepProcessedDeliveries $KeepProcessedDeliveries -KeepFailedDeliveries $KeepFailedDeliveries -KeepAcceptedSnapshots $KeepAcceptedSnapshots
@@ -134,7 +150,7 @@ try {
         }
         catch {
             $message = [string]$_.Exception.Message
-            $status = if ($message -match 'MODULECATALOG_RUNTIME_HEALTH_FAILED|RUNTIME_') { 'HEALTH_FAILED' } elseif ($message -match 'MODULECATALOG_RETENTION_') { 'RETENTION_FAILED' } else { 'POLL_FAILED' }
+            $status = if ($message -match 'MODULECATALOG_RUNTIME_DEEP_HEALTH_FAILED') { 'DEEP_HEALTH_FAILED' } elseif ($message -match 'MODULECATALOG_RUNTIME_HEALTH_FAILED|RUNTIME_') { 'HEALTH_FAILED' } elseif ($message -match 'MODULECATALOG_RETENTION_') { 'RETENTION_FAILED' } else { 'POLL_FAILED' }
             Write-ServiceEvent -Status $status -Message $message
             Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=$status ERROR=$message"
             if ($Once) { throw }
