@@ -68,13 +68,15 @@ try {
     New-TestFile -Path (Join-Path $Records 'formal-kb.reusable-next.jsonl') -MinutesAgo 1000
     New-TestFile -Path (Join-Path $Records 'formal-kb.reusable-base-next.jsonl') -MinutesAgo 1000
 
+    # Current activation markers produced before backupReusable became explicit
+    # contain only backupSearch/formal. Retention must derive the reusable sibling
+    # from the shared timestamp and preserve it as rollback authority.
     $Marker = [ordered]@{
         schemaVersion = 1
         status = 'ACTIVE'
         catalogCommit = $CurrentCommit
         backupFormal = $ProtectedFormal
         backupSearch = $ProtectedSearch
-        backupReusable = $ProtectedReusable
         acceptedRoot = $CurrentAccepted
     }
     $Marker | ConvertTo-Json -Depth 8 | Set-Content -Path (Join-Path $Records 'modulecatalog-reusable-active.json') -Encoding UTF8
@@ -84,7 +86,7 @@ try {
 
     Assert-True (Test-Path $ProtectedSearch) 'protected search backup'
     Assert-True (Test-Path $ProtectedFormal) 'protected formal backup'
-    Assert-True (Test-Path $ProtectedReusable) 'protected reusable backup'
+    Assert-True (Test-Path $ProtectedReusable) 'derived protected reusable backup'
     Assert-True (Test-Path $CurrentAccepted) 'current accepted root'
 
     Assert-Equal @(Get-ChildItem $Data -Directory -Filter 'knowledge-search.previous-*').Count 3 'search backups'
@@ -100,14 +102,14 @@ try {
     Assert-True (-not (Test-Path (Join-Path $Records 'formal-kb.reusable-next.jsonl'))) 'stale next formal removed'
     Assert-True (-not (Test-Path (Join-Path $Records 'formal-kb.reusable-base-next.jsonl'))) 'stale base formal removed'
 
-    # A second pass must be idempotent and must never prune protected rollback/current authority.
     & pwsh -NoProfile -File $Script -Root $Root -KeepActivationBackups 2 -KeepProcessedDeliveries 2 -KeepFailedDeliveries 2 -KeepAcceptedSnapshots 2 -KeepFailedRuntimeBackups 1
     if ($LASTEXITCODE -ne 0) { throw "RETENTION_SECOND_RUN_FAILED=$LASTEXITCODE" }
     Assert-True (Test-Path $ProtectedSearch) 'protected search after replay'
+    Assert-True (Test-Path $ProtectedReusable) 'derived reusable rollback after replay'
     Assert-True (Test-Path $CurrentAccepted) 'current accepted after replay'
     Assert-Equal @(Get-ChildItem $Processed -Directory).Count 2 'processed stable after replay'
 
-    Write-Host 'GACE_MODULECATALOG_RETENTION_TEST=PASS'
+    Write-Host 'GACE_MODULECATALOG_RETENTION_TEST=PASS LEGACY_ROLLBACK_DERIVATION=PASS'
 }
 finally {
     Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
