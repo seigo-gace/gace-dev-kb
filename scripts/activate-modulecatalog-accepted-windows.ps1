@@ -54,20 +54,22 @@ function Write-JsonAtomic {
     param([object]$Value,[string]$Path)
     $directory = Split-Path $Path
     if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
-    $temp = "$Path.tmp.$PID.$([Guid]::NewGuid().ToString('N'))"
+    $tag = "$PID.$([Guid]::NewGuid().ToString('N'))"
+    $temp = "$Path.tmp.$tag"
+    $backup = "$Path.replace-backup.$tag"
     $encoding = New-Object System.Text.UTF8Encoding($false)
     try {
         $json = $Value | ConvertTo-Json -Depth 16
         [System.IO.File]::WriteAllText($temp, $json + [Environment]::NewLine, $encoding)
-        if (Test-Path $Path) {
-            [System.IO.File]::Replace($temp, $Path, $null)
+        if (Test-Path -LiteralPath $Path) {
+            [System.IO.File]::Replace($temp, $Path, $backup)
         }
         else {
             [System.IO.File]::Move($temp, $Path)
         }
     }
     finally {
-        Remove-Item $temp -Force -ErrorAction SilentlyContinue
+        Remove-Item $temp,$backup -Force -ErrorAction SilentlyContinue
     }
 }
 function Invoke-MvsCapture {
