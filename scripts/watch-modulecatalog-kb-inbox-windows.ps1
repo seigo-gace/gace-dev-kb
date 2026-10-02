@@ -26,6 +26,7 @@ if (-not $PowerShellHost -or -not (Test-Path $PowerShellHost)) {
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 
 $ServiceLock = $null
+$OwnsServiceLock = $false
 try {
     try {
         $ServiceLock = [System.IO.File]::Open(
@@ -34,6 +35,7 @@ try {
             [System.IO.FileAccess]::ReadWrite,
             [System.IO.FileShare]::None
         )
+        $OwnsServiceLock = $true
     }
     catch {
         throw "MODULECATALOG_RECEIVER_SERVICE_BUSY=$ServiceLockPath"
@@ -116,5 +118,7 @@ finally {
         $ServiceLock.Dispose()
         $ServiceLock = $null
     }
-    Remove-Item $ServiceLockPath -Force -ErrorAction SilentlyContinue
+    if ($OwnsServiceLock) {
+        Remove-Item $ServiceLockPath -Force -ErrorAction SilentlyContinue
+    }
 }
