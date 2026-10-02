@@ -39,7 +39,7 @@ F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receive.lock
 
 A concurrent receiver fails closed with `MODULECATALOG_RECEIVER_BUSY` instead of running two index/cutover operations against the same current KB.
 
-## Receipts
+## Receipts and current authority
 
 KB receipts are written under:
 
@@ -54,7 +54,15 @@ ACCEPTED = transport payload passed admission and local projection was built.
 ACTIVE   = payload passed the existing KB runtime gates and is the current searchable snapshot.
 ```
 
-Re-delivery of the exact already-ACTIVE Catalog commit is idempotent and must not downgrade it back to ACCEPTED.
+The current authority is also recorded at:
+
+```text
+F:\G-ACE-KB\data\knowledge-records\modulecatalog-reusable-active.json
+```
+
+A receipt marked ACTIVE is not trusted by itself. The receiver requires the current activation marker to name the same Catalog commit. This prevents replay of a previously-active Catalog commit from silently replacing the current snapshot.
+
+Activation authority is written atomically after post-cutover MCP succeeds. If authority writing or verification fails, the same rollback boundary restores the previous formal records, search runtime, reusable snapshot, activation marker and receipt.
 
 ## Operational pipeline
 
@@ -73,11 +81,11 @@ transported delivery
 → new reusable-asset exact + natural MCP retrieval
 → backup-backed current cutover
 → post-cutover MCP verification from the actual current path
-→ ACTIVE receipt
+→ atomic ACTIVE marker / receipt / runtime-state
 → archive delivery under processed
 ```
 
-A failure before cutover leaves the current KB unchanged. A failure after cutover begins triggers rollback to the prior formal records/search runtime/current reusable snapshot. The failed transported bundle is preserved under `failed` for diagnosis.
+A failure before cutover leaves the current KB unchanged. A failure after cutover begins triggers rollback to the prior formal records/search runtime/current reusable snapshot and prior authority files. The failed transported bundle is preserved under `failed` for diagnosis.
 
 ## Data retention
 
@@ -91,9 +99,25 @@ knowledge-metadata.jsonl
 records/*.md
 delivery-manifest.json
 acceptance-state.json
+runtime-state.json
 ```
 
 Search results therefore remain traceable to the parent Asset, exact Catalog commit, source paths, verification, lifecycle, integrity and derivation boundary.
+
+## Runtime health verification
+
+`check-modulecatalog-kb-runtime-windows.ps1` validates the already-active runtime without changing it. It cross-checks the activation marker, ACTIVE receipt and current `runtime-state.json`, verifies formal/reusable/delivery hashes, verifies total and reusable record counts, and confirms the installed MVS reports the exact indexed-file count without vector-only fallback warnings.
+
+Use `-Deep` to additionally rerun repository-history MCP and the full reusable-asset MCP retrieval gate against the current runtime.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\check-modulecatalog-kb-runtime-windows.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\check-modulecatalog-kb-runtime-windows.ps1 `
+  -Deep
+```
 
 ## Commands
 
@@ -115,4 +139,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ## Completion definition
 
 A transported Catalog payload is not operational merely because it was copied or accepted.
-Completion requires an `ACTIVE` receipt after the existing KB runtime has indexed it and post-cutover MCP retrieval succeeds. For inbox operation, the transported directory must also have moved from `processing` to `processed`.
+Completion requires an `ACTIVE` receipt and matching current activation marker after the existing KB runtime has indexed it and post-cutover MCP retrieval succeeds. For inbox operation, the transported directory must also have moved from `processing` to `processed`.
