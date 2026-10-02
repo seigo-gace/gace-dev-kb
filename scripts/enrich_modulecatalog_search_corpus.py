@@ -48,6 +48,7 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
     classification = (
         row.get("classification") if isinstance(row.get("classification"), dict) else {}
     )
+    composition = row.get("composition") if isinstance(row.get("composition"), dict) else {}
     if not asset_id or not knowledge_id:
         raise RuntimeError("CORPUS_FRONTMATTER_IDENTITY_MISSING")
 
@@ -64,6 +65,15 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
         tags.append(f"runtime-{safe_tag(value)}")
     for value in classification.get("tags") or []:
         tags.append(f"catalog-tag-{safe_tag(value)}")
+
+    # Asset-level dependency semantics are canonical Catalog data. Project them
+    # only on the discovery document so the existing MVS KG gets one stable
+    # relationship-bearing node per Asset instead of duplicating the edge across
+    # every code/design/test Knowledge Unit.
+    if kind == "discovery":
+        for dependency in composition.get("depends_on") or []:
+            tags.append(f"depends-on-{safe_tag(dependency)}")
+
     tags = list(dict.fromkeys(tags))
 
     lines = [
@@ -111,12 +121,15 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
             asset_to_preferred_file[asset_id] = path.name
 
     written = 0
+    relation_link_docs = 0
+    dependency_link_docs = 0
     for row, path in zip(rows, files, strict=True):
         current = path.read_text(encoding="utf-8")
         if current.startswith("---\n"):
             raise RuntimeError(f"CORPUS_FRONTMATTER_ALREADY_PRESENT={path.name}")
 
         related: list[str] = []
+        relationship_added = False
         for rel in row.get("relationships") or []:
             if not isinstance(rel, dict):
                 continue
@@ -133,6 +146,17 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
                 filename = unit_to_file.get(candidate) or asset_to_preferred_file.get(candidate)
                 if filename and filename != path.name:
                     related.append(filename)
+                    relationship_added = True
+
+        dependency_added = False
+        if str(row.get("knowledge_kind") or "") == "discovery":
+            composition = row.get("composition") if isinstance(row.get("composition"), dict) else {}
+            for dependency in composition.get("depends_on") or []:
+                filename = asset_to_preferred_file.get(str(dependency))
+                if filename and filename != path.name:
+                    related.append(filename)
+                    dependency_added = True
+
         related = list(dict.fromkeys(related))
         path.write_text(
             frontmatter_for(row, related) + current,
@@ -140,10 +164,13 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
             newline="\n",
         )
         written += 1
+        relation_link_docs += int(relationship_added)
+        dependency_link_docs += int(dependency_added)
 
     print(
         f"GACE_MODULECATALOG_CORPUS_ENRICH=PASS RECORDS={written} "
-        f"TAG={BASE_TAG} RELATION_LINKS={sum(1 for row in rows if row.get('relationships'))}"
+        f"TAG={BASE_TAG} RELATION_LINK_DOCS={relation_link_docs} "
+        f"DEPENDENCY_LINK_DOCS={dependency_link_docs}"
     )
     return written
 
