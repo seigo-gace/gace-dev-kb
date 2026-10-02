@@ -68,7 +68,11 @@ function Prune-Collection {
         [hashtable]$Protected,
         [ref]$Removed
     )
-    $ordered = @($Items | Sort-Object LastWriteTimeUtc -Descending, Name)
+    $ordered = @(
+        $Items | Sort-Object `
+            @{ Expression = { $_.LastWriteTimeUtc }; Descending = $true }, `
+            @{ Expression = { $_.Name }; Descending = $false }
+    )
     $keptByRank = 0
     foreach ($item in $ordered) {
         $full = Get-NormalizedFullPath -Path $item.FullName
@@ -159,8 +163,6 @@ try {
         Prune-Collection -Items $failed -Keep $KeepFailedDeliveries -AllowedRoot $FailedRoot -Protected $Protected -Removed ([ref]$Removed)
     }
 
-    # These are transactional scratch paths, not historical authority. With the
-    # receive lock held and no activation journal they cannot belong to a live cutover.
     foreach ($stale in @(
         (Join-Path $DataRoot 'knowledge-search.reusable-staging'),
         (Join-Path $KnowledgeSourcesRoot 'modulecatalog-reusable-staging'),
