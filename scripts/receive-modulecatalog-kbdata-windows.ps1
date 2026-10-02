@@ -9,8 +9,9 @@ $Repo = Join-Path $Root 'repo'
 $Acceptor = Join-Path $Repo 'scripts\accept_modulecatalog_delivery.py'
 $Activator = Join-Path $Repo 'scripts\activate-modulecatalog-accepted-windows.ps1'
 $Recovery = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
+$HealthCheck = Join-Path $Repo 'scripts\check-modulecatalog-kb-runtime-windows.ps1'
 $ManifestPath = Join-Path $DeliveryRoot 'manifest.json'
-foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$Recovery,$DeliveryRoot,$ManifestPath)) {
+foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$Recovery,$HealthCheck,$DeliveryRoot,$ManifestPath)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 $PowerShellHost = (Get-Process -Id $PID).Path
@@ -39,8 +40,6 @@ try {
         throw "MODULECATALOG_RECEIVER_BUSY=$LockPath"
     }
 
-    # Resolve any interrupted previous cutover before trusting receipts/markers.
-    # This is intentionally before the idempotent ACTIVE shortcut.
     if (Test-Path $ActivationJournal) {
         Write-Host '=== KB RECEIVE: RECOVER INTERRUPTED ACTIVATION ==='
         & $Recovery -Root $Root -JournalPath $ActivationJournal
@@ -65,25 +64,26 @@ try {
 
     $Receipt = Get-Content $ReceiptPath -Raw | ConvertFrom-Json
     if ([string]$Receipt.status -eq 'ACTIVE') {
-        if (-not (Test-Path $ActivationMarker)) {
-            throw "ACTIVE_RECEIPT_WITHOUT_CURRENT_MARKER=$ReceiptPath"
-        }
+        if (-not (Test-Path $ActivationMarker)) { throw "ACTIVE_RECEIPT_WITHOUT_CURRENT_MARKER=$ReceiptPath" }
         $Current = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
-        if ([string]$Current.status -ne 'ACTIVE') {
-            throw "CURRENT_MARKER_STATUS_INVALID=$($Current.status)"
-        }
+        if ([string]$Current.status -ne 'ACTIVE') { throw "CURRENT_MARKER_STATUS_INVALID=$($Current.status)" }
         if ([string]$Current.catalogCommit -ne $CatalogCommit) {
             throw "PREVIOUSLY_ACTIVE_DELIVERY_IS_NOT_CURRENT incoming=$CatalogCommit current=$($Current.catalogCommit)"
         }
         if (Test-Path $ActivationJournal) { throw "ACTIVE_WITH_UNRESOLVED_JOURNAL=$ActivationJournal" }
-        Write-Host "GACE_MODULECATALOG_RECEIVE=PASS IDEMPOTENT=YES STATUS=ACTIVE COMMIT=$CatalogCommit"
+
+        # ACTIVE is an operational claim, not a cached receipt. Re-check the real
+        # current runtime under the receiver's already-held lock before accepting
+        # a replay as idempotent success.
+        Write-Host '=== KB RECEIVE: REVERIFY CURRENT ACTIVE RUNTIME ==='
+        & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $HealthCheck -Root $Root -Deep -AssumeReceiveLockHeld
+        if ($LASTEXITCODE -ne 0) { throw "IDEMPOTENT_ACTIVE_RUNTIME_UNHEALTHY=$LASTEXITCODE" }
+        Write-Host "GACE_MODULECATALOG_RECEIVE=PASS IDEMPOTENT=YES STATUS=ACTIVE HEALTH=DEEP COMMIT=$CatalogCommit"
         Write-Host "RECEIPT=$ReceiptPath"
         return
     }
     if ([string]$Receipt.status -ne 'ACCEPTED') { throw "DELIVERY_RECEIPT_STATUS_INVALID=$($Receipt.status)" }
 
-    # Keep the accepted projection immutable after admission. Runtime filename/link
-    # adaptation belongs to activation's staging copy, never to accepted authority.
     $AcceptedCorpus = Join-Path $AcceptedRoot 'projection\records'
     if (-not (Test-Path $AcceptedCorpus)) { throw "ACCEPTED_CORPUS_MISSING=$AcceptedCorpus" }
 
@@ -97,15 +97,16 @@ try {
     $FinalCurrent = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
     if ([string]$FinalCurrent.status -ne 'ACTIVE' -or [string]$FinalCurrent.catalogCommit -ne $CatalogCommit) { throw 'FINAL_CURRENT_MARKER_MISMATCH' }
     if (Test-Path $ActivationJournal) { throw "FINAL_ACTIVATION_JOURNAL_PRESENT=$ActivationJournal" }
-    Write-Host "GACE_MODULECATALOG_RECEIVE=PASS STATUS=ACTIVE COMMIT=$CatalogCommit ASSETS=$($FinalReceipt.assetCount) RECORDS=$($FinalReceipt.knowledgeUnitCount)"
+
+    # Activation already performs post-cutover MCP verification. Run the complete
+    # non-mutating health gate once more on the final current authority so receipt
+    # success and health-check success have exactly the same boundary.
+    & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $HealthCheck -Root $Root -AssumeReceiveLockHeld
+    if ($LASTEXITCODE -ne 0) { throw "FINAL_ACTIVE_RUNTIME_HEALTH_FAILED=$LASTEXITCODE" }
+    Write-Host "GACE_MODULECATALOG_RECEIVE=PASS STATUS=ACTIVE HEALTH=PASS COMMIT=$CatalogCommit ASSETS=$($FinalReceipt.assetCount) RECORDS=$($FinalReceipt.knowledgeUnitCount)"
     Write-Host "RECEIPT=$ReceiptPath"
 }
 finally {
-    if ($null -ne $LockStream) {
-        $LockStream.Dispose()
-        $LockStream = $null
-    }
-    if ($OwnsReceiveLock) {
-        Remove-Item $LockPath -Force -ErrorAction SilentlyContinue
-    }
+    if ($null -ne $LockStream) { $LockStream.Dispose(); $LockStream = $null }
+    if ($OwnsReceiveLock) { Remove-Item $LockPath -Force -ErrorAction SilentlyContinue }
 }
