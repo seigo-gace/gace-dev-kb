@@ -53,10 +53,13 @@ jobs:
             'scripts/recover-modulecatalog-activation-windows.ps1',
             'scripts/receive-modulecatalog-kbdata-windows.ps1',
             'scripts/process-modulecatalog-inbox-windows.ps1',
+            'scripts/watch-modulecatalog-kb-inbox-windows.ps1',
+            'scripts/configure-modulecatalog-kb-receiver-task-windows.ps1',
             'scripts/check-modulecatalog-kb-runtime-windows.ps1',
             'tests/test_modulecatalog_inbox_lifecycle.ps1',
             'tests/test_modulecatalog_activation_recovery.ps1',
-            'tests/test_modulecatalog_runtime_health_lock.ps1'
+            'tests/test_modulecatalog_runtime_health_lock.ps1',
+            'tests/test_modulecatalog_receiver_service.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -84,6 +87,10 @@ jobs:
       - name: Runtime health serialization
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_runtime_health_lock.ps1
+
+      - name: Receiver service one-shot path
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_service.ps1
 
       - name: Search corpus KG relation projection tests
         run: python -B tests/test_enrich_modulecatalog_search_corpus.py
