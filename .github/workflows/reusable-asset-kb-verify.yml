@@ -35,12 +35,15 @@ jobs:
             scripts/copy_preserved_kb_runtime_corpus.py \
             scripts/enrich_modulecatalog_search_corpus.py \
             scripts/prefix_modulecatalog_runtime_links.py \
+            scripts/runtime_corpus_integrity.py \
+            scripts/verify_modulecatalog_runtime_projection.py \
             scripts/accept_modulecatalog_delivery.py \
             tests/mcp_reusable_asset_e2e.py \
             tests/test_accept_modulecatalog_delivery.py \
             tests/test_copy_preserved_kb_runtime_corpus.py \
             tests/test_enrich_modulecatalog_search_corpus.py \
-            tests/test_prefix_modulecatalog_runtime_links.py
+            tests/test_prefix_modulecatalog_runtime_links.py \
+            tests/test_runtime_corpus_integrity.py
 
       - name: Node syntax gate
         run: node --check scripts/run_modulecatalog_reusable_export.mjs
@@ -126,7 +129,10 @@ jobs:
       - name: Search corpus KG relation projection tests
         run: python -B tests/test_enrich_modulecatalog_search_corpus.py
 
-      - name: Runtime KG link prefix tests
+      - name: Runtime corpus integrity tests
+        run: python -B tests/test_runtime_corpus_integrity.py
+
+      - name: Runtime KG link and accepted-to-live projection tests
         run: python -B tests/test_prefix_modulecatalog_runtime_links.py
 
       - name: Reusable export importer fixture tests
@@ -253,6 +259,7 @@ jobs:
               -RetryBackoffSeconds 1 `
               -HeartbeatSeconds 5 `
               -RuntimeHealthSeconds 0 `
+              -DeepRuntimeHealthSeconds 0 `
               -RetentionSeconds 0 `
               -StartupVerifySeconds 30
 
