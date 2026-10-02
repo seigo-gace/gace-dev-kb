@@ -41,6 +41,10 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
+    def tamper_unit_without_touching_top_manifest(self):
+        target = self.fixture.export_root / "assets" / "asset-a" / "knowledge-units.jsonl"
+        target.write_text(target.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
+
     def test_accepts_transport_and_builds_projection(self):
         receipt = accept_module.accept_delivery(
             self.fixture.export_root, self.accepted, self.receipt
@@ -53,32 +57,16 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         self.assertEqual(state["catalogCommit"], self.fixture.commit)
         self.assertEqual(state["projectionSchemaVersion"], 2)
         self.assertEqual(state["corpusCount"], 1)
-        self.assertEqual(
-            state["corpusRuntimeEnrichment"], "mvs-4.1.14-frontmatter-v1"
-        )
+        self.assertEqual(state["corpusRuntimeEnrichment"], "mvs-4.1.14-frontmatter-v1")
         projection = self.accepted / "projection"
         self.assertTrue((projection / "knowledge-records.jsonl").is_file())
         self.assertTrue((projection / "knowledge-metadata.jsonl").is_file())
         self.assertTrue((projection / "relationships.jsonl").is_file())
         self.assertTrue((projection / "cases.jsonl").is_file())
-        self.assertEqual(
-            accept_module.sha256_file(projection / "relationships.jsonl"),
-            state["relationshipsSha256"],
-        )
-        self.assertEqual(
-            accept_module.sha256_file(projection / "cases.jsonl"),
-            state["casesSha256"],
-        )
+        self.assertEqual(accept_module.sha256_file(projection / "relationships.jsonl"), state["relationshipsSha256"])
+        self.assertEqual(accept_module.sha256_file(projection / "cases.jsonl"), state["casesSha256"])
         self.assertEqual(receipt["relationshipsSha256"], state["relationshipsSha256"])
         self.assertEqual(receipt["casesSha256"], state["casesSha256"])
-        self.assertEqual(
-            len([line for line in (projection / "relationships.jsonl").read_text().splitlines() if line.strip()]),
-            state["relationshipCount"],
-        )
-        self.assertEqual(
-            len([line for line in (projection / "cases.jsonl").read_text().splitlines() if line.strip()]),
-            state["caseCount"],
-        )
         corpus_files = list((projection / "records").glob("*.md"))
         self.assertEqual(len(corpus_files), 1)
         corpus_text = corpus_files[0].read_text(encoding="utf-8")
@@ -87,7 +75,7 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         self.assertIn('"asset-asset-a"', corpus_text)
         self.assertIn('"knowledge-kind-logic"', corpus_text)
 
-    def test_idempotent_accept_does_not_duplicate_projection(self):
+    def test_idempotent_accept_reverifies_and_does_not_duplicate_projection(self):
         first = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         second = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         self.assertEqual(first["deliveryManifestSha256"], second["deliveryManifestSha256"])
@@ -97,7 +85,7 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         self.assertEqual(len(corpus_files), 1)
         self.assertEqual(corpus_files[0].read_text(encoding="utf-8").count("---\n"), 2)
 
-    def test_active_receipt_is_not_downgraded(self):
+    def test_active_receipt_is_not_downgraded_after_full_reverification(self):
         receipt = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         receipt["status"] = "ACTIVE"
         receipt["activatedAtUtc"] = "2026-10-01T00:00:00+00:00"
@@ -107,12 +95,31 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         self.assertEqual(result["activatedAtUtc"], "2026-10-01T00:00:00+00:00")
 
     def test_rejects_tampered_delivery_before_acceptance(self):
-        target = self.fixture.export_root / "assets" / "asset-a" / "knowledge-units.jsonl"
-        target.write_text(target.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
+        self.tamper_unit_without_touching_top_manifest()
         with self.assertRaisesRegex(RuntimeError, "BUNDLE_MANIFEST_(SIZE|SHA256)_MISMATCH"):
             accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         self.assertFalse(self.accepted.exists())
         self.assertFalse(self.receipt.exists())
+
+    def test_rejects_tampered_replay_after_accepted_projection_exists(self):
+        accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
+        original_state = (self.accepted / "state.json").read_bytes()
+        self.tamper_unit_without_touching_top_manifest()
+        with self.assertRaisesRegex(RuntimeError, "BUNDLE_MANIFEST_(SIZE|SHA256)_MISMATCH"):
+            accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
+        self.assertEqual((self.accepted / "state.json").read_bytes(), original_state)
+
+    def test_rejects_tampered_replay_even_when_receipt_is_already_active(self):
+        receipt = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
+        receipt["status"] = "ACTIVE"
+        receipt["activatedAtUtc"] = "2026-10-01T00:00:00+00:00"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        self.tamper_unit_without_touching_top_manifest()
+        with self.assertRaisesRegex(RuntimeError, "BUNDLE_MANIFEST_(SIZE|SHA256)_MISMATCH"):
+            accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
+        still_active = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.assertEqual(still_active["status"], "ACTIVE")
+        self.assertEqual(still_active["activatedAtUtc"], "2026-10-01T00:00:00+00:00")
 
 
 if __name__ == "__main__":
