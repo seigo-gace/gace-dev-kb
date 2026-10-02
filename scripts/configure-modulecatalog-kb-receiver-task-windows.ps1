@@ -8,7 +8,17 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $env:WINDIR) { throw 'WINDOWS_REQUIRED' }
-foreach ($command in @('Register-ScheduledTask','Unregister-ScheduledTask','New-ScheduledTaskAction','New-ScheduledTaskTrigger','New-ScheduledTaskSettingsSet','New-ScheduledTaskPrincipal')) {
+foreach ($command in @(
+    'Register-ScheduledTask',
+    'Unregister-ScheduledTask',
+    'Start-ScheduledTask',
+    'Stop-ScheduledTask',
+    'Get-ScheduledTask',
+    'New-ScheduledTaskAction',
+    'New-ScheduledTaskTrigger',
+    'New-ScheduledTaskSettingsSet',
+    'New-ScheduledTaskPrincipal'
+)) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "SCHEDULED_TASK_COMMAND_MISSING=$command" }
 }
 
