@@ -12,6 +12,9 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+REQUIRED_TOOLS = {"search_code", "kg_stats", "kg_query"}
+KG_RUNTIME_TAG = "gace-reusable-asset"
+
 
 def text_from_result(result):
     return "\n".join(
@@ -19,6 +22,19 @@ def text_from_result(result):
         for item in (getattr(result, "content", None) or [])
         if getattr(item, "text", None)
     )
+
+
+def json_from_result(result, label):
+    text = text_from_result(result).strip()
+    if not text:
+        raise RuntimeError(f"{label}_EMPTY")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{label}_NON_JSON={text[:500]}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{label}_JSON_OBJECT_REQUIRED")
+    return value
 
 
 def load(path: Path):
@@ -38,9 +54,12 @@ def natural_query(row):
     for key in ("purpose", "responsibility", "summary"):
         if discovery.get(key):
             terms.append(str(discovery[key]))
-    for key in ("name", "knowledge_kind", "content"):
+    for key in ("name", "knowledge_kind"):
         if row.get(key):
             terms.append(str(row[key]))
+    content = str(row.get("content") or "").strip()
+    if content:
+        terms.append(content[:600])
     return " ".join(terms).strip()
 
 
@@ -50,6 +69,40 @@ async def wait(awaitable, seconds, label):
             return await awaitable
     except TimeoutError as exc:
         raise RuntimeError(f"{label}_TIMEOUT={seconds}s") from exc
+
+
+async def search_and_require(
+    session,
+    *,
+    query: str,
+    knowledge_id: str,
+    mode: str,
+    timeout: int,
+    label: str,
+):
+    result = await wait(
+        session.call_tool(
+            "search_code",
+            arguments={
+                "query": query,
+                "limit": 50,
+                "similarity_threshold": 0.0,
+                "search_mode": mode,
+                "use_rerank": False,
+                "expand": False,
+            },
+        ),
+        timeout,
+        label,
+    )
+    if getattr(result, "isError", False):
+        raise RuntimeError(f"{label}_TOOL_ERROR={text_from_result(result)}")
+    text = text_from_result(result)
+    if knowledge_id not in text:
+        raise RuntimeError(
+            f"{label}_EXPECTED_MISSING mode={mode} id={knowledge_id}"
+        )
+    return text
 
 
 async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: int):
@@ -86,10 +139,14 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         raise RuntimeError("MCP_SERVER_INFO_MISSING")
                     tools = await wait(session.list_tools(), timeout, "MCP_LIST_TOOLS")
                     names = {tool.name for tool in tools.tools}
-                    if "search_code" not in names:
-                        raise RuntimeError("MCP_SEARCH_CODE_TOOL_MISSING")
+                    missing = REQUIRED_TOOLS - names
+                    if missing:
+                        raise RuntimeError(
+                            "MCP_REUSABLE_REQUIRED_TOOLS_MISSING=" + ",".join(sorted(missing))
+                        )
                     print(f"MCP_REUSABLE_INITIALIZE=PASS TOOLS={len(names)}")
 
+                    # Every Knowledge Unit must remain exactly retrievable by stable ID.
                     for row in rows:
                         knowledge_id = str(row["knowledge_id"])
                         parent_asset_id = str(row.get("parent_asset_id") or "")
@@ -98,32 +155,23 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         asset_ids.add(parent_asset_id)
                         knowledge_kind = str(row.get("knowledge_kind") or "unknown")
                         kind_first.setdefault(knowledge_kind, row)
-                        result = await wait(
-                            session.call_tool(
-                                "search_code",
-                                arguments={
-                                    "query": knowledge_id,
-                                    "limit": 50,
-                                    "similarity_threshold": 0.0,
-                                    "search_mode": "bm25",
-                                    "use_rerank": False,
-                                    "expand": False,
-                                },
-                            ),
-                            timeout,
-                            f"MCP_REUSABLE_{knowledge_id}",
+                        await search_and_require(
+                            session,
+                            query=knowledge_id,
+                            knowledge_id=knowledge_id,
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_BM25_{knowledge_id}",
                         )
-                        if getattr(result, "isError", False):
-                            raise RuntimeError(
-                                f"MCP_REUSABLE_TOOL_ERROR={knowledge_id}:{text_from_result(result)}"
-                            )
-                        if knowledge_id not in text_from_result(result):
-                            raise RuntimeError(f"MCP_REUSABLE_NOT_RETRIEVED={knowledge_id}")
                     print(
-                        f"MCP_REUSABLE_EXACT_SEARCH=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
+                        f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
                     )
 
+                    # One representative of every Knowledge Kind must be usable through
+                    # all three existing retrieval modes, not BM25 alone.
                     natural = 0
+                    vector = 0
+                    hybrid = 0
                     for knowledge_kind, row in sorted(kind_first.items()):
                         query = natural_query(row)
                         knowledge_id = str(row["knowledge_id"])
@@ -131,33 +179,73 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             raise RuntimeError(
                                 f"MCP_REUSABLE_NATURAL_QUERY_EMPTY kind={knowledge_kind} id={knowledge_id}"
                             )
-                        result = await wait(
-                            session.call_tool(
-                                "search_code",
-                                arguments={
-                                    "query": query,
-                                    "limit": 50,
-                                    "similarity_threshold": 0.0,
-                                    "search_mode": "bm25",
-                                    "use_rerank": False,
-                                    "expand": False,
-                                },
-                            ),
-                            timeout,
-                            f"MCP_REUSABLE_NATURAL_{knowledge_kind}",
-                        )
-                        if getattr(result, "isError", False):
-                            raise RuntimeError(
-                                f"MCP_REUSABLE_NATURAL_TOOL_ERROR={knowledge_kind}"
+                        for mode in ("bm25", "vector", "hybrid"):
+                            await search_and_require(
+                                session,
+                                query=query,
+                                knowledge_id=knowledge_id,
+                                mode=mode,
+                                timeout=timeout,
+                                label=f"MCP_REUSABLE_{mode.upper()}_{knowledge_kind}",
                             )
-                        if knowledge_id not in text_from_result(result):
-                            raise RuntimeError(
-                                f"MCP_REUSABLE_NATURAL_EXPECTED_MISSING kind={knowledge_kind} id={knowledge_id}"
-                            )
-                        natural += 1
+                            if mode == "bm25":
+                                natural += 1
+                            elif mode == "vector":
+                                vector += 1
+                            else:
+                                hybrid += 1
                         print(
-                            f"MCP_REUSABLE_NATURAL_SEARCH=PASS KIND={knowledge_kind} ID={knowledge_id}"
+                            f"MCP_REUSABLE_MULTI_MODE_SEARCH=PASS KIND={knowledge_kind} "
+                            f"ID={knowledge_id} MODES=bm25,vector,hybrid"
                         )
+
+                    # The existing Knowledge Graph must be healthy and the accepted
+                    # reusable documents must actually be present in it. The KB-side
+                    # projection adds a deterministic frontmatter tag consumed by MVS.
+                    kg_stats = await wait(
+                        session.call_tool("kg_stats", arguments={}),
+                        timeout,
+                        "MCP_REUSABLE_KG_STATS",
+                    )
+                    if getattr(kg_stats, "isError", False):
+                        raise RuntimeError(
+                            "MCP_REUSABLE_KG_STATS_TOOL_ERROR=" + text_from_result(kg_stats)
+                        )
+                    stats = json_from_result(kg_stats, "MCP_REUSABLE_KG_STATS")
+                    if str(stats.get("status") or "").lower() not in {"success", "ok"}:
+                        raise RuntimeError(f"MCP_REUSABLE_KG_STATS_STATUS_INVALID={stats}")
+                    statistics = stats.get("statistics") if isinstance(stats.get("statistics"), dict) else {}
+                    total_entities = int(statistics.get("total_entities", 0) or 0)
+                    doc_sections = int(statistics.get("doc_sections", 0) or 0)
+                    if total_entities <= 0 or doc_sections <= 0:
+                        raise RuntimeError(
+                            f"MCP_REUSABLE_KG_EMPTY entities={total_entities} doc_sections={doc_sections}"
+                        )
+                    print(
+                        f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities} DOC_SECTIONS={doc_sections}"
+                    )
+
+                    kg_query = await wait(
+                        session.call_tool(
+                            "kg_query",
+                            arguments={"entity": f"tag:{KG_RUNTIME_TAG}", "limit": 100},
+                        ),
+                        timeout,
+                        "MCP_REUSABLE_KG_TAG_QUERY",
+                    )
+                    if getattr(kg_query, "isError", False):
+                        raise RuntimeError(
+                            "MCP_REUSABLE_KG_TAG_TOOL_ERROR=" + text_from_result(kg_query)
+                        )
+                    kg_payload = json_from_result(kg_query, "MCP_REUSABLE_KG_TAG_QUERY")
+                    if str(kg_payload.get("status") or "").lower() not in {"success", "ok"}:
+                        raise RuntimeError(f"MCP_REUSABLE_KG_TAG_STATUS_INVALID={kg_payload}")
+                    results = kg_payload.get("results")
+                    if not isinstance(results, list) or not results:
+                        raise RuntimeError("MCP_REUSABLE_KG_TAG_RESULTS_EMPTY")
+                    print(
+                        f"MCP_REUSABLE_KG_TAG_QUERY=PASS TAG={KG_RUNTIME_TAG} RESULTS={len(results)}"
+                    )
 
             errlog.flush()
             errlog.seek(0)
@@ -174,7 +262,8 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
 
     print(
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
-        f"KNOWLEDGE_KINDS={len(kind_first)} NATURAL_CHECKS={natural}"
+        f"KNOWLEDGE_KINDS={len(kind_first)} BM25_NATURAL={natural} VECTOR={vector} "
+        f"HYBRID={hybrid} KG=PASS"
     )
 
 
