@@ -26,7 +26,7 @@ A directory without `manifest.json` is incomplete/pending and is not consumed. T
 
 The active KB is a **single-current-snapshot** runtime. Until the producer manifest carries explicit monotonic ordering / predecessor authority, more than one complete ready delivery is rejected with `MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY`. Directory names, filesystem time, or Git commit time are never used to guess which Catalog snapshot is newer.
 
-Before processing, the KB claims one complete delivery by moving it from `ready` to `processing`. Success moves it to `processed`; failure moves it to `failed` with a timestamp suffix. Successful archives contain `kb-active-receipt.json`. Failed archives contain machine-readable `kb-failure.json`.
+Before processing, the KB claims one complete delivery by moving it from `ready` to `processing`. Success moves it to `processed`; failure moves it to `failed` with a timestamp suffix. Successful archives contain `kb-active-receipt.json`. Every receiver attempt also keeps its own `kb-receiver-<attempt>.stdout.log` / `kb-receiver-<attempt>.stderr.log`, so Task Scheduler or background execution never becomes the only place where activation diagnostics existed. Failed archives additionally contain machine-readable `kb-failure.json` pointing to those logs.
 
 If a prior process/PC interruption left exactly one delivery under `processing`, the next inbox run resumes that claimed delivery before considering new ready data. More than one stranded processing delivery fails closed and requires explicit recovery.
 
@@ -34,14 +34,60 @@ The transport side may use another delivery directory only when it explicitly in
 
 ## Receive and health serialization
 
-Two levels of serialization protect current KB state:
+Three levels of serialization protect the receive service and current KB state:
 
 ```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receiver-service.lock
 F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\processor.lock
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receive.lock
 ```
 
-`processor.lock` serializes inbox claim/archive lifecycle. `receive.lock` serializes admission/index/cutover **and current-runtime health inspection**. A deep/shallow health check therefore cannot race a current snapshot replacement.
+`receiver-service.lock` prevents two long-running inbox watchers from running concurrently, including a manual watcher accidentally started while the scheduled receiver is already running. `processor.lock` serializes inbox claim/archive lifecycle. `receive.lock` serializes admission/index/cutover **and current-runtime health inspection**. A deep/shallow health check therefore cannot race a current snapshot replacement.
+
+## Continuous Windows receiver
+
+`watch-modulecatalog-kb-inbox-windows.ps1` is the continuous KB-side consumer. It invokes the inbox processor synchronously, so one potentially long BM25/Vector/KG activation must finish before another delivery can be considered. It uses an exclusive service lock and therefore fails closed with `MODULECATALOG_RECEIVER_SERVICE_BUSY` when another watcher already owns the receive loop.
+
+Service events are written to:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receiver-service.jsonl
+```
+
+Successful idle polling is heartbeat-throttled (default 300 seconds rather than every 10-second poll). The service log is bounded by rotation (default 5 MiB per file, five rotated files) so unattended operation does not grow one JSONL forever.
+
+One-shot service verification:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\watch-modulecatalog-kb-inbox-windows.ps1 `
+  -Once
+```
+
+For unattended startup, `configure-modulecatalog-kb-receiver-task-windows.ps1` registers a current-user, Limited, AtLogOn task in the root Task Scheduler folder:
+
+```text
+\G-ACE-KB-ModuleCatalogReceiver
+```
+
+The installer avoids relying on a pre-created custom scheduler folder, verifies the persisted executable/arguments/working directory/principal after registration, starts the task, and requires it to remain `Running` rather than accepting an immediately-dead `Ready` task as success.
+
+Install/start:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1
+```
+
+Uninstall/stop:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File F:\G-ACE-KB\repo\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 `
+  -Uninstall
+```
+
+The scheduled task is code/configuration in this branch only until the Master-PC real-runtime gate explicitly installs it; repository changes do not create the PC task by themselves.
 
 ## Receipts and current authority
 
@@ -94,7 +140,9 @@ relation-<relation-type>
 depends-on-<asset-id>
 ```
 
-Resolvable relationships/dependencies also produce deterministic `related:` document links. Activation prefixes ModuleCatalog runtime filenames to isolate them from the pre-existing KB corpus, so the receiver rewrites `related:` targets to the same prefix before indexing. This keeps existing MVS graph links aligned with the actual runtime filenames.
+Resolvable relationships/dependencies also produce deterministic `related:` document links. Explicit producer `asset contains knowledge-unit` relationships are projected from the Asset discovery document to the explicitly-contained unit documents, so the current Catalog containment graph is not reduced to archival JSON. Other cross-unit/cross-asset relationships and dependencies produce links only when their targets resolve; absent producer relationships are never invented.
+
+Activation prefixes ModuleCatalog runtime filenames to isolate them from the pre-existing KB corpus, so the receiver rewrites `related:` targets to the same prefix before indexing. This keeps existing MVS graph links aligned with the actual runtime filenames.
 
 This uses the already-installed `mcp-vector-search 4.1.14` runtime through:
 
@@ -120,6 +168,7 @@ representative Relationship ID retrieval
 KG base reusable-data tag query
 KG relation-type tag query when relationship semantics exist
 KG dependency tag query when Catalog dependencies exist
+KG LINKS_TO relationship presence when resolvable producer relationships exist
 existing repository-history MCP regression
 existing accepted-asset MCP regression when present
 post-cutover rerun against the actual current runtime path
@@ -132,6 +181,7 @@ The current producer contract has no Catalog dependencies among the 80 regressio
 ```text
 transported delivery
 → ready
+→ continuous receiver / one-shot processor
 → atomic claim into processing
 → acceptance / integrity verification
 → projection schema v2
@@ -150,7 +200,7 @@ transported delivery
 → post-cutover MCP verification from the actual current path
 → atomic ACTIVE marker / receipt / runtime-state
 → clear transaction journal
-→ archive delivery under processed
+→ archive delivery under processed with receiver stdout/stderr + ACTIVE receipt
 ```
 
 ## Cutover crash recovery
@@ -241,11 +291,11 @@ matching current activation marker
 matching runtime-state
 structured relationship/case hashes + counts intact
 existing BM25 / Vector / Hybrid retrieval gates PASS
-existing Knowledge Graph reusable/relation/dependency semantic gates PASS where applicable
+existing Knowledge Graph reusable/relation/dependency/containment gates PASS where applicable
 post-cutover MCP PASS on the actual current path
-delivery archived under processed
+delivery archived under processed with receiver diagnostic logs
 no unresolved activation transaction journal
 runtime health PASS
 ```
 
-The remaining environment-specific gate is the real Master-PC installed MVS runtime after ModuleCatalog genuinely transports a delivery. GitHub contract tests do not substitute for that Windows runtime proof.
+For unattended operation, the Master-PC receiver task must additionally prove its persisted action/principal and remain Running after start. The remaining environment-specific gate is the real Master-PC installed MVS runtime after ModuleCatalog genuinely transports a delivery. GitHub contract tests do not substitute for that Windows runtime proof.
