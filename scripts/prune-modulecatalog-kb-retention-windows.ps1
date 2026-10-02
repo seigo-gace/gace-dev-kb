@@ -121,6 +121,19 @@ try {
                 $normalized = Get-NormalizedFullPath -Path $value
                 if ($normalized) { $Protected[$normalized] = $true }
             }
+
+            # Older ACTIVE marker schema records backupSearch/formal but not the
+            # reusable rollback path. All three activation backups share the same
+            # timestamp suffix, so derive and protect that exact sibling rather
+            # than allowing retention ranking to delete rollback authority.
+            $backupSearchValue = [string]$marker.backupSearch
+            $backupSearchName = if ($backupSearchValue) { [System.IO.Path]::GetFileName($backupSearchValue) } else { '' }
+            if ($backupSearchName -match '^knowledge-search\.previous-(.+)$') {
+                $derivedReusable = Get-NormalizedFullPath -Path (Join-Path $KnowledgeSourcesRoot ("modulecatalog-reusable.previous-{0}" -f $Matches[1]))
+                if ($derivedReusable -and (Test-Path $derivedReusable)) {
+                    $Protected[$derivedReusable] = $true
+                }
+            }
         }
     }
     if ($CurrentCommit.Length -eq 40) {
