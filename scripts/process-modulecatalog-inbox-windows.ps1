@@ -35,6 +35,7 @@ function Read-LogTail {
 
 $ProcessorLockPath = Join-Path $InboxBase 'processor.lock'
 $ProcessorLock = $null
+$OwnsProcessorLock = $false
 try {
     try {
         $ProcessorLock = [System.IO.File]::Open(
@@ -43,6 +44,7 @@ try {
             [System.IO.FileAccess]::ReadWrite,
             [System.IO.FileShare]::None
         )
+        $OwnsProcessorLock = $true
     }
     catch {
         throw "MODULECATALOG_INBOX_PROCESSOR_BUSY=$ProcessorLockPath"
@@ -187,5 +189,7 @@ finally {
         $ProcessorLock.Dispose()
         $ProcessorLock = $null
     }
-    Remove-Item $ProcessorLockPath -Force -ErrorAction SilentlyContinue
+    if ($OwnsProcessorLock) {
+        Remove-Item $ProcessorLockPath -Force -ErrorAction SilentlyContinue
+    }
 }
