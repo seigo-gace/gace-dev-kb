@@ -53,7 +53,8 @@ jobs:
             'scripts/process-modulecatalog-inbox-windows.ps1',
             'scripts/check-modulecatalog-kb-runtime-windows.ps1',
             'tests/test_modulecatalog_inbox_lifecycle.ps1',
-            'tests/test_modulecatalog_activation_recovery.ps1'
+            'tests/test_modulecatalog_activation_recovery.ps1',
+            'tests/test_modulecatalog_runtime_health_lock.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -77,6 +78,10 @@ jobs:
       - name: Activation journal recovery
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_activation_recovery.ps1
+
+      - name: Runtime health serialization
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_runtime_health_lock.ps1
 
       - name: Search corpus KG relation projection tests
         run: python -B tests/test_enrich_modulecatalog_search_corpus.py
@@ -158,9 +163,11 @@ jobs:
           assert all(row['verification']['status'] == 'verified' for row in metadata)
           assert all(row['_gace']['commit'] == commit for row in metadata)
           dependency_tagged = sum('depends-on-' in path.read_text() for path in corpus)
+          relation_tagged = sum('relation-' in path.read_text() for path in corpus)
           print(
               'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS '
               f'ASSETS=80 RECORDS=720 RELATIONSHIPS={len(relationships)} CASES=160 '
-              f'KINDS={len(kinds)} DEPENDENCY_TAGGED_DOCS={dependency_tagged} KG_READY=YES'
+              f'KINDS={len(kinds)} DEPENDENCY_TAGGED_DOCS={dependency_tagged} '
+              f'RELATION_TAGGED_DOCS={relation_tagged} KG_READY=YES'
           )
           PY
