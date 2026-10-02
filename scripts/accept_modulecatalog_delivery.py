@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Accept a transported ModuleCatalog KB export at the G-ACE KB boundary.
 
-This is the operational producer/consumer boundary. ModuleCatalog owns creation,
-search-ready enrichment, verification and transport. G-ACE KB starts here: it
-verifies the delivered bundle, builds the local searchable projection, and emits
-an acceptance receipt for the downstream activation/indexing pipeline.
+ModuleCatalog owns canonical reusable-asset creation, verification, search-ready
+KBData generation and transport. G-ACE KB starts at receipt: verify the transported
+bundle, build the local runtime projection, preserve structured relationship/case
+sidecars, and emit an acceptance receipt for activation/indexing.
 """
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ from typing import Any
 
 from enrich_modulecatalog_search_corpus import enrich as enrich_search_corpus
 from import_modulecatalog_reusable_export import FORMAT, CATALOG_REPOSITORY, import_export
+
+PROJECTION_SCHEMA_VERSION = 2
+RUNTIME_ENRICHMENT = "mvs-4.1.14-frontmatter-v1"
 
 
 def sha256_file(path: Path) -> str:
@@ -80,6 +83,41 @@ def derive_counts(manifest: dict[str, Any]) -> tuple[str, int, int, int, int]:
     return commit, asset_count, record_count, relationship_count, case_count
 
 
+def aggregate_sidecar(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    *,
+    filename: str,
+    expected_count: int,
+    output: Path,
+) -> int:
+    rows: list[dict[str, Any]] = []
+    for item in manifest["assets"]:
+        asset_id = str(item["id"])
+        source = delivery_root / "assets" / asset_id / filename
+        if not source.is_file():
+            raise RuntimeError(f"DELIVERY_SIDECAR_MISSING={asset_id}:{filename}")
+        for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise RuntimeError(
+                    f"DELIVERY_SIDECAR_OBJECT_REQUIRED={asset_id}:{filename}:{line_number}"
+                )
+            rows.append(value)
+    if len(rows) != expected_count:
+        raise RuntimeError(
+            f"DELIVERY_SIDECAR_COUNT_MISMATCH file={filename} "
+            f"expected={expected_count} actual={len(rows)}"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return len(rows)
+
+
 def receipt_payload(
     *,
     status: str,
@@ -92,11 +130,14 @@ def receipt_payload(
     accepted_root: Path,
     records_hash: str | None = None,
     metadata_hash: str | None = None,
+    relationships_hash: str | None = None,
+    cases_hash: str | None = None,
     corpus_count: int | None = None,
     prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schemaVersion": 1,
+        "projectionSchemaVersion": PROJECTION_SCHEMA_VERSION,
         "status": status,
         "catalogRepository": CATALOG_REPOSITORY,
         "catalogCommit": commit,
@@ -112,6 +153,10 @@ def receipt_payload(
         payload["knowledgeRecordsSha256"] = records_hash
     if metadata_hash:
         payload["knowledgeMetadataSha256"] = metadata_hash
+    if relationships_hash:
+        payload["relationshipsSha256"] = relationships_hash
+    if cases_hash:
+        payload["casesSha256"] = cases_hash
     if corpus_count is not None:
         payload["corpusCount"] = corpus_count
     if prior and prior.get("status") == "ACTIVE":
@@ -145,6 +190,7 @@ def accept_delivery(
             str(prior_receipt.get("catalogCommit") or "") == commit
             and str(prior_receipt.get("deliveryManifestSha256") or "") == manifest_hash
             and prior_receipt.get("status") == "ACTIVE"
+            and int(prior_receipt.get("projectionSchemaVersion", 0)) == PROJECTION_SCHEMA_VERSION
         ):
             print(
                 "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=YES "
@@ -162,6 +208,19 @@ def accept_delivery(
             or str(state.get("deliveryManifestSha256") or "") != manifest_hash
         ):
             raise RuntimeError(f"ACCEPTED_ROOT_CONFLICT={accepted_root}")
+        if int(state.get("projectionSchemaVersion", 0)) != PROJECTION_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"ACCEPTED_PROJECTION_VERSION_MISMATCH expected={PROJECTION_SCHEMA_VERSION} "
+                f"actual={state.get('projectionSchemaVersion')} root={accepted_root}"
+            )
+        for rel in (
+            "projection/knowledge-records.jsonl",
+            "projection/knowledge-metadata.jsonl",
+            "projection/relationships.jsonl",
+            "projection/cases.jsonl",
+        ):
+            if not (accepted_root / rel).is_file():
+                raise RuntimeError(f"ACCEPTED_PROJECTION_FILE_MISSING={accepted_root / rel}")
         receipt = receipt_payload(
             status="ACCEPTED",
             commit=commit,
@@ -173,6 +232,8 @@ def accept_delivery(
             accepted_root=accepted_root,
             records_hash=str(state.get("knowledgeRecordsSha256") or ""),
             metadata_hash=str(state.get("knowledgeMetadataSha256") or ""),
+            relationships_hash=str(state.get("relationshipsSha256") or ""),
+            cases_hash=str(state.get("casesSha256") or ""),
             corpus_count=int(state.get("corpusCount", record_count)),
             prior=prior_receipt,
         )
@@ -200,12 +261,28 @@ def accept_delivery(
 
         records_path = projection / "knowledge-records.jsonl"
         metadata_path = projection / "knowledge-metadata.jsonl"
+        relationships_path = projection / "relationships.jsonl"
+        cases_path = projection / "cases.jsonl"
+        aggregate_sidecar(
+            delivery_root,
+            manifest,
+            filename="relationships.jsonl",
+            expected_count=relationship_count,
+            output=relationships_path,
+        )
+        aggregate_sidecar(
+            delivery_root,
+            manifest,
+            filename="cases.jsonl",
+            expected_count=case_count,
+            output=cases_path,
+        )
+
         enriched_count = enrich_search_corpus(metadata_path, corpus)
         if enriched_count != record_count:
             raise RuntimeError(
                 f"DELIVERY_CORPUS_ENRICH_COUNT_MISMATCH expected={record_count} actual={enriched_count}"
             )
-
         corpus_count = len(list(corpus.glob("*.md")))
         if corpus_count != record_count:
             raise RuntimeError(
@@ -214,6 +291,7 @@ def accept_delivery(
 
         state = {
             "schemaVersion": 1,
+            "projectionSchemaVersion": PROJECTION_SCHEMA_VERSION,
             "status": "ACCEPTED",
             "catalogRepository": CATALOG_REPOSITORY,
             "catalogCommit": commit,
@@ -222,10 +300,12 @@ def accept_delivery(
             "relationshipCount": relationship_count,
             "caseCount": case_count,
             "corpusCount": corpus_count,
-            "corpusRuntimeEnrichment": "mvs-4.1.14-frontmatter-v1",
+            "corpusRuntimeEnrichment": RUNTIME_ENRICHMENT,
             "deliveryManifestSha256": manifest_hash,
             "knowledgeRecordsSha256": sha256_file(records_path),
             "knowledgeMetadataSha256": sha256_file(metadata_path),
+            "relationshipsSha256": sha256_file(relationships_path),
+            "casesSha256": sha256_file(cases_path),
             "acceptedAtUtc": datetime.now(timezone.utc).isoformat(),
         }
         write_json_atomic(temp_dir / "state.json", state)
@@ -247,6 +327,8 @@ def accept_delivery(
         accepted_root=accepted_root,
         records_hash=str(state["knowledgeRecordsSha256"]),
         metadata_hash=str(state["knowledgeMetadataSha256"]),
+        relationships_hash=str(state["relationshipsSha256"]),
+        cases_hash=str(state["casesSha256"]),
         corpus_count=int(state["corpusCount"]),
         prior=prior_receipt,
     )
@@ -254,7 +336,7 @@ def accept_delivery(
     print(
         "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=NO "
         f"STATUS={receipt['status']} COMMIT={commit} ASSETS={asset_count} "
-        f"RECORDS={record_count} CASES={case_count}"
+        f"RECORDS={record_count} RELATIONSHIPS={relationship_count} CASES={case_count}"
     )
     return receipt
 
