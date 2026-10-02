@@ -77,6 +77,10 @@ On Windows, timeout terminates the receiver process tree with `taskkill.exe /T /
 
 `watch-modulecatalog-kb-inbox-windows.ps1` is the continuous KB-side consumer. It invokes the inbox processor synchronously, so one BM25/Vector/KG activation must finish before another delivery is considered.
 
+The watcher also performs **automatic Current-runtime health checks** whenever an ACTIVE marker exists. `RuntimeHealthSeconds` defaults to 300 seconds. The normal continuous check is intentionally non-Deep to keep idle operating cost low; it verifies active authority, hashes/cardinality, MVS index state and known degradation warnings. Deep MCP verification remains available separately and is already required during activation/post-cutover.
+
+Health events are recorded as `HEALTH_PASS` / `HEALTH_FAILED`. A health failure does not mutate Current; it is logged and the watcher applies retry backoff while remaining available for a later delivery that may repair the runtime.
+
 Service events are written to:
 
 ```text
@@ -93,6 +97,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Once
 ```
 
+Set `-RuntimeHealthSeconds 0` only for isolated tests that intentionally disable continuous Current health inspection.
+
 ## Windows scheduled receiver task
 
 `configure-modulecatalog-kb-receiver-task-windows.ps1` can register the receiver as the current user, Limited, AtLogOn task:
@@ -101,7 +107,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 \G-ACE-KB-ModuleCatalogReceiver
 ```
 
-The installer verifies persisted executable, arguments, working directory and principal, starts the task and requires it to remain Running.
+The installer verifies persisted executable, arguments, working directory and principal. When replacing an existing task it first stops the old running instance so `MultipleInstances=IgnoreNew` cannot silently leave the previous command line active. After registration it starts the new task and requires **both** Running state and a fresh watcher `STARTED` event while the receiver-service lock is held. Merely observing Scheduled Task state is not considered sufficient startup proof.
+
+The scheduled command carries `RuntimeHealthSeconds` into the watcher, so automatic health monitoring is part of the same operational receiver rather than a separate manual procedure.
 
 It also configures bounded restart behavior for transient startup failure, defaulting to 12 restart attempts at a 1-minute interval. This covers cases such as delayed availability of the F: runtime at logon without creating an infinite restart loop.
 
@@ -228,7 +236,7 @@ transported delivery
 → matching ACTIVE runtime-state / marker / receipt
 → clear journal
 → processed archive with ACTIVE receipt + receiver logs
-→ ongoing health
+→ scheduled automatic Current health checks
 ```
 
 ## Cutover crash recovery
@@ -285,6 +293,8 @@ absence of known degraded vector-only/BM25 warnings
 
 `-Deep` reruns repository-history plus reusable MCP BM25/Vector/Hybrid/KG gates.
 
+The watcher invokes the non-Deep health check automatically on its configured cadence. Manual Deep inspection remains available:
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File F:\G-ACE-KB\repo\scripts\check-modulecatalog-kb-runtime-windows.ps1 `
@@ -333,6 +343,7 @@ ACTIVE receipt + Current marker + runtime-state agree
 processed archive contains ACTIVE receipt + receiver diagnostics
 no unresolved activation transaction journal
 runtime health PASS
+continuous receiver configured to keep checking active health after deployment
 no timed-out/orphan receiver process remains active
 ```
 
