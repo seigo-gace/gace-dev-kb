@@ -4,7 +4,9 @@
 
 ModuleCatalog owns reusable-asset creation, verification, search-ready KBData generation and transport.
 G-ACE KB starts at **receipt of a transported `gace.reusable-asset.v1` delivery**.
-The operational KB path must not clone/fetch ModuleCatalog or regenerate producer data.
+The operational KB path must not clone/fetch ModuleCatalog or regenerate producer canonical data.
+
+KB-side runtime adaptation is allowed only as a derived projection required by the existing KB runtime. Canonical transported files remain unchanged.
 
 ## Inbox contract
 
@@ -20,9 +22,9 @@ F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\
 └─ failed\
 ```
 
-The transport side must publish a complete delivery under `ready`. A directory without `manifest.json` is incomplete/pending and is not consumed.
+A directory without `manifest.json` is incomplete/pending and is not consumed. The transport side should finish a delivery outside `ready`, then atomically move/rename the complete directory into `ready`.
 
-The active KB is a **single-current-snapshot** runtime. Until the producer manifest carries explicit monotonic ordering / predecessor authority, more than one complete ready delivery is rejected with `MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY`. Directory names or filesystem time are never used to guess which Catalog snapshot is newer.
+The active KB is a **single-current-snapshot** runtime. Until the producer manifest carries explicit monotonic ordering / predecessor authority, more than one complete ready delivery is rejected with `MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY`. Directory names, filesystem time, or Git commit time are never used to guess which Catalog snapshot is newer.
 
 Before processing, the KB claims one complete delivery by moving it from `ready` to `processing`. Success moves it to `processed`; failure moves it to `failed` with a timestamp suffix. Successful archives contain `kb-active-receipt.json`. Failed archives contain machine-readable `kb-failure.json`.
 
@@ -30,7 +32,7 @@ If a prior process/PC interruption left exactly one delivery under `processing`,
 
 The transport side may use another delivery directory only when it explicitly invokes the receiver with `-DeliveryRoot`.
 
-## Receive serialization
+## Receive and health serialization
 
 Two levels of serialization protect current KB state:
 
@@ -39,7 +41,7 @@ F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\processor.lock
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receive.lock
 ```
 
-`processor.lock` serializes inbox claim/archive lifecycle. `receive.lock` serializes admission/index/cutover. Concurrent mutation attempts fail closed instead of racing two index/cutover operations.
+`processor.lock` serializes inbox claim/archive lifecycle. `receive.lock` serializes admission/index/cutover **and current-runtime health inspection**. A deep/shallow health check therefore cannot race a current snapshot replacement.
 
 ## Receipts and current authority
 
@@ -66,21 +68,64 @@ The current reusable snapshot also contains `runtime-state.json`. ACTIVE receipt
 
 ## Accepted projection and existing KB features
 
-The eight-field Knowledge Record remains only the legacy compatibility envelope. Full reusable-asset data is retained in `knowledge-metadata.jsonl` and deterministic Markdown search documents.
+The eight-field Knowledge Record remains only the legacy compatibility envelope. The accepted projection schema is currently `projectionSchemaVersion=2` and preserves:
 
-At acceptance time, the KB adds **runtime-only derived frontmatter** to its local Markdown projection. The transported/canonical ModuleCatalog bundle is not modified. Frontmatter contains stable reusable-asset / parent-asset / knowledge-kind / lifecycle / verification tags plus resolvable related-document links from transported relationships.
+```text
+knowledge-records.jsonl
+knowledge-metadata.jsonl
+relationships.jsonl
+cases.jsonl
+records/*.md
+```
 
-This allows the already-installed `mcp-vector-search 4.1.14` runtime to use the same accepted documents through:
+`relationships.jsonl` and `cases.jsonl` are retained as structured sidecars with independent SHA-256 + cardinality verification through acceptance, activation and runtime health checks. They are not discarded after the Markdown search projection is built.
+
+At acceptance time, the KB adds **runtime-only derived frontmatter** to its local Markdown projection. The transported/canonical ModuleCatalog bundle is not modified. Frontmatter exposes stable reusable-asset / parent-asset / knowledge-kind / lifecycle / verification metadata plus relationship/dependency semantics needed by the existing MVS Knowledge Graph.
+
+Runtime tags currently include:
+
+```text
+gace-reusable-asset
+asset-<asset-id>
+knowledge-kind-<kind>
+lifecycle-<status>
+verification-<status>
+relation-<relation-type>
+depends-on-<asset-id>
+```
+
+Resolvable relationships/dependencies also produce deterministic `related:` document links. Activation prefixes ModuleCatalog runtime filenames to isolate them from the pre-existing KB corpus, so the receiver rewrites `related:` targets to the same prefix before indexing. This keeps existing MVS graph links aligned with the actual runtime filenames.
+
+This uses the already-installed `mcp-vector-search 4.1.14` runtime through:
 
 ```text
 BM25
 Vector semantic search
 Hybrid search
-Knowledge Graph DocSection/Tag relationships
+Knowledge Graph
 MCP
 ```
 
-The runtime gate therefore does not prove BM25 alone. Every Knowledge Unit remains exactly retrievable by stable ID through BM25, and one representative of every Knowledge Kind must pass natural-language retrieval through BM25, Vector and Hybrid modes. The MCP Knowledge Graph must report populated entities/doc sections and `kg_query` must find the accepted reusable corpus through the deterministic `gace-reusable-asset` tag.
+No second search engine or second graph database is introduced for ModuleCatalog data.
+
+## Runtime search/use gates
+
+The runtime gate proves more than file ingestion:
+
+```text
+all Knowledge Units exact BM25 retrieval by stable ID
+representative of every Knowledge Kind through BM25 / Vector / Hybrid natural retrieval
+representative Case ID retrieval
+representative Relationship ID retrieval
+KG base reusable-data tag query
+KG relation-type tag query when relationship semantics exist
+KG dependency tag query when Catalog dependencies exist
+existing repository-history MCP regression
+existing accepted-asset MCP regression when present
+post-cutover rerun against the actual current runtime path
+```
+
+The current producer contract has no Catalog dependencies among the 80 regression Assets, so dependency KG lookup is fail-safe skipped for that dataset. Relation semantics are still present through the canonical `contains` relationships and are projected/queryable without inventing new producer facts.
 
 ## Operational pipeline
 
@@ -89,16 +134,17 @@ transported delivery
 → ready
 → atomic claim into processing
 → acceptance / integrity verification
+→ projection schema v2
+→ structured relationships/cases retained
+→ runtime-only search/KG enrichment
+→ runtime related-link filename alignment
 → ACCEPTED receipt
-→ local structured + KG-ready search projection
 → active-snapshot replacement candidate
 → staging search corpus
 → existing BM25 / Vector / Knowledge Graph index
 → repository-history MCP regression
 → existing accepted-asset MCP regression
-→ all Knowledge Units exact BM25 retrieval
-→ per-Knowledge-Kind BM25 / Vector / Hybrid natural retrieval
-→ KG stats + reusable tag query
+→ reusable exact/natural/case/relationship/KG gates
 → durable activation transaction journal
 → backup-backed current cutover
 → post-cutover MCP verification from the actual current path
@@ -109,7 +155,7 @@ transported delivery
 
 ## Cutover crash recovery
 
-In-process exceptions already roll back formal records, search runtime, reusable snapshot, activation marker and receipt. Hard process/PC termination is handled separately with:
+In-process exceptions roll back formal records, search runtime, reusable snapshot, activation marker and receipt. Hard process/PC termination is handled separately with:
 
 ```text
 F:\G-ACE-KB\data\knowledge-intake\modulecatalog\activation-transaction.json
@@ -134,19 +180,21 @@ Current reusable snapshot:
 ```text
 knowledge-records.jsonl
 knowledge-metadata.jsonl
+relationships.jsonl
+cases.jsonl
 records/*.md
 delivery-manifest.json
 acceptance-state.json
 runtime-state.json
 ```
 
-Search results therefore remain traceable to parent Asset, exact Catalog commit, source paths, verification, lifecycle, integrity and derivation boundary.
+Search/use therefore remains traceable to parent Asset, exact Catalog commit, source paths, relationship/case data, verification, lifecycle, integrity and derivation boundary.
 
 ## Runtime health verification
 
-`check-modulecatalog-kb-runtime-windows.ps1` is non-mutating. It cross-checks activation marker, ACTIVE receipt and current `runtime-state.json`; verifies formal/reusable/delivery hashes and record counts; and confirms MVS indexed-file cardinality without degraded vector-only warnings.
+`check-modulecatalog-kb-runtime-windows.ps1` is non-mutating but acquires the same receive lock as activation. It cross-checks activation marker, ACTIVE receipt and current `runtime-state.json`; verifies formal/reusable/delivery/relationship/case hashes and cardinalities; confirms runtime frontmatter; and confirms MVS indexed-file cardinality without degraded vector-only warnings.
 
-`-Deep` reruns repository-history MCP plus the full reusable MCP gate, including BM25 / Vector / Hybrid and Knowledge Graph checks.
+`-Deep` additionally reruns repository-history MCP plus the full reusable MCP gate, including BM25 / Vector / Hybrid and Knowledge Graph checks.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -191,9 +239,13 @@ Completion requires all of the following:
 ACTIVE receipt
 matching current activation marker
 matching runtime-state
+structured relationship/case hashes + counts intact
 existing BM25 / Vector / Hybrid retrieval gates PASS
-existing Knowledge Graph gate PASS
+existing Knowledge Graph reusable/relation/dependency semantic gates PASS where applicable
 post-cutover MCP PASS on the actual current path
 delivery archived under processed
 no unresolved activation transaction journal
+runtime health PASS
 ```
+
+The remaining environment-specific gate is the real Master-PC installed MVS runtime after ModuleCatalog genuinely transports a delivery. GitHub contract tests do not substitute for that Windows runtime proof.
