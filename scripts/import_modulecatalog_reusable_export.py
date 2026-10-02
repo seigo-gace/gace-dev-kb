@@ -65,7 +65,12 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def read_jsonl(path: Path, empty_code: str) -> list[dict[str, Any]]:
+def read_jsonl(
+    path: Path,
+    empty_code: str,
+    *,
+    allow_empty: bool = False,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -75,7 +80,7 @@ def read_jsonl(path: Path, empty_code: str) -> list[dict[str, Any]]:
             if not isinstance(value, dict):
                 raise RuntimeError(f"JSONL_OBJECT_REQUIRED file={path} line={line_number}")
             rows.append(value)
-    if not rows:
+    if not rows and not allow_empty:
         raise RuntimeError(empty_code)
     return rows
 
@@ -474,16 +479,25 @@ def import_export(
         if str(asset["integrity"].get("asset_hash") or "") != expected_asset_hash:
             raise RuntimeError(f"ASSET_INTEGRITY_HASH_MISMATCH={asset_id}")
 
+        declared_units = int(item.get("knowledgeUnits", -1))
+        declared_relationships = int(item.get("relationships", -1))
+        declared_cases = int(item.get("cases", -1))
         units = read_jsonl(asset_dir / "knowledge-units.jsonl", f"KNOWLEDGE_UNITS_EMPTY={asset_id}")
         relationships = read_jsonl(
-            asset_dir / "relationships.jsonl", f"RELATIONSHIPS_EMPTY={asset_id}"
+            asset_dir / "relationships.jsonl",
+            f"RELATIONSHIPS_EMPTY={asset_id}",
+            allow_empty=declared_relationships == 0,
         )
-        cases = read_jsonl(asset_dir / "cases.jsonl", f"CASES_EMPTY={asset_id}")
-        if len(units) != int(item.get("knowledgeUnits", -1)):
+        cases = read_jsonl(
+            asset_dir / "cases.jsonl",
+            f"CASES_EMPTY={asset_id}",
+            allow_empty=declared_cases == 0,
+        )
+        if len(units) != declared_units:
             raise RuntimeError(f"KNOWLEDGE_UNIT_COUNT_MISMATCH={asset_id}")
-        if len(relationships) != int(item.get("relationships", -1)):
+        if len(relationships) != declared_relationships:
             raise RuntimeError(f"RELATIONSHIP_COUNT_MISMATCH={asset_id}")
-        if len(cases) != int(item.get("cases", -1)):
+        if len(cases) != declared_cases:
             raise RuntimeError(f"CASE_COUNT_MISMATCH={asset_id}")
 
         unit_ids: set[str] = set()
