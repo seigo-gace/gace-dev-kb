@@ -216,6 +216,18 @@ class ModuleCatalogReusableExportTests(unittest.TestCase):
             "cases": 1,
         }
 
+    def refresh_bundle_manifest(self, asset_id: str, entry: dict):
+        asset_dir = self.export_root / "assets" / asset_id
+        manifest = json.loads((asset_dir / "manifest.json").read_text(encoding="utf-8"))
+        files = []
+        for item in manifest["files"]:
+            path = asset_dir / item["path"]
+            files.append({"path": item["path"], "size": path.stat().st_size, "sha256": sha256_bytes(path.read_bytes())})
+        manifest["files"] = files
+        manifest["bundle_hash"] = sha256_bytes(canonical_json(files).encode("utf-8"))
+        (asset_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        entry["bundleHash"] = manifest["bundle_hash"]
+
     def write_export(self, entries):
         manifest = {
             "schema_version": 1,
@@ -268,6 +280,29 @@ class ModuleCatalogReusableExportTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         self.assertEqual({row["knowledge_kind"] for row in metadata}, {"logic", "architecture"})
 
+    def test_accepts_zero_optional_relationships_and_cases(self):
+        entry = self.write_asset_bundle("asset-a", kind="architecture")
+        asset_dir = self.export_root / "assets" / "asset-a"
+        (asset_dir / "relationships.jsonl").write_text("", encoding="utf-8")
+        (asset_dir / "cases.jsonl").write_text("", encoding="utf-8")
+        entry["relationships"] = 0
+        entry["cases"] = 0
+        self.refresh_bundle_manifest("asset-a", entry)
+        self.write_export([entry])
+
+        records, metadata, corpus, asset_count = module.import_export(
+            self.export_root,
+            self.output_root,
+            expected_catalog_commit=self.commit,
+            expected_asset_count=1,
+            expected_record_count=1,
+        )
+        self.assertEqual(asset_count, 1)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(metadata[0]["cases"], [])
+        self.assertEqual(metadata[0]["relationships"], [])
+        self.assertEqual(len(list(corpus.glob("*.md"))), 1)
+
     def test_rejects_bundle_file_tamper(self):
         entry = self.write_asset_bundle("asset-a")
         self.write_export([entry])
@@ -298,16 +333,7 @@ class ModuleCatalogReusableExportTests(unittest.TestCase):
         rel = json.loads(rel_path.read_text(encoding="utf-8"))
         rel["to"] = "missing-node"
         rel_path.write_text(json.dumps(rel) + "\n", encoding="utf-8", newline="\n")
-        asset_dir = rel_path.parent
-        manifest = json.loads((asset_dir / "manifest.json").read_text(encoding="utf-8"))
-        files = []
-        for item in manifest["files"]:
-            p = asset_dir / item["path"]
-            files.append({"path": item["path"], "size": p.stat().st_size, "sha256": sha256_bytes(p.read_bytes())})
-        manifest["files"] = files
-        manifest["bundle_hash"] = sha256_bytes(canonical_json(files).encode("utf-8"))
-        (asset_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-        entry["bundleHash"] = manifest["bundle_hash"]
+        self.refresh_bundle_manifest("asset-a", entry)
         self.write_export([entry])
         with self.assertRaisesRegex(RuntimeError, "RELATIONSHIP_TARGET_UNKNOWN"):
             module.import_export(self.export_root, self.output_root)
