@@ -45,6 +45,7 @@ try {
         -PollSeconds 1 `
         -HeartbeatSeconds 60 `
         -RuntimeHealthSeconds 1 `
+        -RetentionSeconds 0 `
         -Once
     if ($LASTEXITCODE -ne 0) { throw "RECEIVER_SERVICE_ONCE_FAILED=$LASTEXITCODE" }
     if (-not (Test-Path $Marker)) { throw "RECEIVER_SERVICE_PROCESSOR_NOT_CALLED=$Marker" }
@@ -61,7 +62,6 @@ try {
     if (@($events | Where-Object { $_.status -eq 'POLL_PASS' }).Count -ne 1) { throw 'RECEIVER_SERVICE_POLL_PASS_EVENT_MISSING' }
     if (@($events | Where-Object { $_.status -eq 'STOPPED' }).Count -ne 1) { throw 'RECEIVER_SERVICE_STOPPED_EVENT_MISSING' }
 
-    # A second receiver must fail closed while another instance owns the service lock.
     $held = [System.IO.File]::Open(
         $lock,
         [System.IO.FileMode]::OpenOrCreate,
@@ -77,6 +77,7 @@ try {
             -Python $Python `
             -PollSeconds 1 `
             -RuntimeHealthSeconds 0 `
+            -RetentionSeconds 0 `
             -Once 2>&1 | Out-String)
         $busyExit = $LASTEXITCODE
         if ($busyExit -eq 0) { throw 'RECEIVER_SERVICE_SINGLETON_DID_NOT_FAIL' }
@@ -89,7 +90,6 @@ try {
         Remove-Item $lock -Force -ErrorAction SilentlyContinue
     }
 
-    # Rotation must be bounded and must preserve the current event stream.
     [System.IO.File]::WriteAllText($log, ('x' * 2048), [System.Text.UTF8Encoding]::new($false))
     & (Get-Process -Id $PID).Path `
         -NoProfile `
@@ -99,6 +99,7 @@ try {
         -Python $Python `
         -PollSeconds 1 `
         -RuntimeHealthSeconds 0 `
+        -RetentionSeconds 0 `
         -MaxLogBytes 1024 `
         -MaxLogFiles 2 `
         -Once
