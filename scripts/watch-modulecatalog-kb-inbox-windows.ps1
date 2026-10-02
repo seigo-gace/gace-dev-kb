@@ -5,6 +5,11 @@ param(
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
+    [ValidateRange(0,604800)][int]$RetentionSeconds = 3600,
+    [ValidateRange(1,50)][int]$KeepActivationBackups = 3,
+    [ValidateRange(1,500)][int]$KeepProcessedDeliveries = 20,
+    [ValidateRange(1,500)][int]$KeepFailedDeliveries = 20,
+    [ValidateRange(1,100)][int]$KeepAcceptedSnapshots = 5,
     [ValidateRange(1024,1073741824)][long]$MaxLogBytes = 5242880,
     [ValidateRange(1,20)][int]$MaxLogFiles = 5,
     [switch]$Once
@@ -14,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = Join-Path $Root 'repo'
 $Processor = Join-Path $Repo 'scripts\process-modulecatalog-inbox-windows.ps1'
 $HealthCheck = Join-Path $Repo 'scripts\check-modulecatalog-kb-runtime-windows.ps1'
+$Retention = Join-Path $Repo 'scripts\prune-modulecatalog-kb-retention-windows.ps1'
 $ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $LogPath = Join-Path $IntakeRoot 'receiver-service.jsonl'
@@ -22,6 +28,7 @@ $ServiceLockPath = Join-Path $IntakeRoot 'receiver-service.lock'
 
 $required = @($Repo,$Processor,$Python)
 if ($RuntimeHealthSeconds -gt 0) { $required += $HealthCheck }
+if ($RetentionSeconds -gt 0) { $required += $Retention }
 foreach ($path in $required) {
     if (-not (Test-Path $path)) { throw "RECEIVER_SERVICE_REQUIRED_PATH_MISSING=$path" }
 }
@@ -82,11 +89,13 @@ try {
         finally { $stream.Dispose() }
     }
 
-    Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds RuntimeHealthSeconds=$RuntimeHealthSeconds Once=$Once Host=$PowerShellHost"
-    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds ONCE=$Once HOST=$PowerShellHost"
+    $startMessage = "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds RuntimeHealthSeconds=$RuntimeHealthSeconds RetentionSeconds=$RetentionSeconds KeepActivationBackups=$KeepActivationBackups KeepProcessedDeliveries=$KeepProcessedDeliveries KeepFailedDeliveries=$KeepFailedDeliveries KeepAcceptedSnapshots=$KeepAcceptedSnapshots Once=$Once Host=$PowerShellHost"
+    Write-ServiceEvent -Status 'STARTED' -Message $startMessage
+    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED $startMessage"
 
     $LastPassLogUtc = [DateTime]::MinValue
     $LastHealthUtc = [DateTime]::MinValue
+    $LastRetentionUtc = [DateTime]::MinValue
     while ($true) {
         if (Test-Path $StopPath) {
             Write-ServiceEvent -Status 'STOPPED' -Message "Stop marker detected: $StopPath"
@@ -109,6 +118,15 @@ try {
             }
 
             $now = [DateTime]::UtcNow
+            if ($RetentionSeconds -gt 0 -and (($now - $LastRetentionUtc).TotalSeconds -ge $RetentionSeconds)) {
+                & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $Retention -Root $Root -KeepActivationBackups $KeepActivationBackups -KeepProcessedDeliveries $KeepProcessedDeliveries -KeepFailedDeliveries $KeepFailedDeliveries -KeepAcceptedSnapshots $KeepAcceptedSnapshots
+                if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_RETENTION_FAILED=$LASTEXITCODE" }
+                $LastRetentionUtc = [DateTime]::UtcNow
+                Write-ServiceEvent -Status 'RETENTION_PASS' -Message "Operational retention completed. KeepActivationBackups=$KeepActivationBackups KeepProcessedDeliveries=$KeepProcessedDeliveries KeepFailedDeliveries=$KeepFailedDeliveries KeepAcceptedSnapshots=$KeepAcceptedSnapshots"
+                Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=RETENTION_PASS"
+            }
+
+            $now = [DateTime]::UtcNow
             if ($Once -or (($now - $LastPassLogUtc).TotalSeconds -ge $HeartbeatSeconds)) {
                 Write-ServiceEvent -Status 'POLL_PASS' -Message 'Inbox processor completed.'
                 $LastPassLogUtc = $now
@@ -116,7 +134,7 @@ try {
         }
         catch {
             $message = [string]$_.Exception.Message
-            $status = if ($message -match 'MODULECATALOG_RUNTIME_HEALTH_FAILED|RUNTIME_') { 'HEALTH_FAILED' } else { 'POLL_FAILED' }
+            $status = if ($message -match 'MODULECATALOG_RUNTIME_HEALTH_FAILED|RUNTIME_') { 'HEALTH_FAILED' } elseif ($message -match 'MODULECATALOG_RETENTION_') { 'RETENTION_FAILED' } else { 'POLL_FAILED' }
             Write-ServiceEvent -Status $status -Message $message
             Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=$status ERROR=$message"
             if ($Once) { throw }
