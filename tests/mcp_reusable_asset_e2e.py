@@ -39,9 +39,27 @@ def json_from_result(result, label):
 
 
 def load(path: Path):
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if not rows:
         raise RuntimeError("REUSABLE_ASSET_METADATA_EMPTY")
+    return rows
+
+
+def load_optional_jsonl(path: Path, label: str):
+    if not path.is_file():
+        return []
+    rows = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{label}_OBJECT_REQUIRED={path}:{line_number}")
+        rows.append(value)
     return rows
 
 
@@ -70,20 +88,6 @@ def natural_query(row):
     return " ".join(terms).strip()
 
 
-def first_embedded_probe(rows, collection_key, id_key):
-    for row in rows:
-        values = row.get(collection_key)
-        if not isinstance(values, list):
-            continue
-        for value in values:
-            if not isinstance(value, dict):
-                continue
-            probe_id = str(value.get(id_key) or "").strip()
-            if probe_id:
-                return row, value, probe_id
-    return None
-
-
 def first_dependency_probe(rows):
     for row in rows:
         if str(row.get("knowledge_kind") or "") != "discovery":
@@ -93,6 +97,53 @@ def first_dependency_probe(rows):
             value = str(dependency or "").strip()
             if value:
                 return row, value
+    return None
+
+
+def runtime_maps(rows):
+    by_unit = {}
+    discovery_by_asset = {}
+    source_owners = {}
+    for row in rows:
+        knowledge_id = str(row.get("knowledge_id") or "")
+        asset_id = str(row.get("parent_asset_id") or "")
+        if knowledge_id:
+            by_unit[knowledge_id] = row
+        if asset_id and str(row.get("knowledge_kind") or "") == "discovery":
+            discovery_by_asset[asset_id] = row
+        for source_path in row.get("source_paths") or []:
+            source_owners.setdefault((asset_id, str(source_path)), []).append(row)
+    return by_unit, discovery_by_asset, source_owners
+
+
+def relationship_probe(rows, relationships):
+    by_unit, discovery_by_asset, _ = runtime_maps(rows)
+    for relationship in relationships:
+        relationship_id = str(relationship.get("relationship_id") or "").strip()
+        if not relationship_id:
+            continue
+        source = str(relationship.get("from") or "")
+        target = str(relationship.get("to") or "")
+        expected = by_unit.get(source) or discovery_by_asset.get(source)
+        if expected is None:
+            expected = by_unit.get(target) or discovery_by_asset.get(target)
+        if expected is not None:
+            return expected, relationship, relationship_id
+    return None
+
+
+def case_probe(rows, cases):
+    _by_unit, discovery_by_asset, source_owners = runtime_maps(rows)
+    for case in cases:
+        case_id = str(case.get("case_id") or "").strip()
+        asset_id = str(case.get("parent_asset_id") or "").strip()
+        if not case_id or not asset_id:
+            continue
+        source_test = str(case.get("source_test") or "")
+        owners = source_owners.get((asset_id, source_test), []) if source_test else []
+        expected = owners[0] if owners else discovery_by_asset.get(asset_id)
+        if expected is not None:
+            return expected, case, case_id
     return None
 
 
@@ -132,9 +183,7 @@ async def search_and_require(
         raise RuntimeError(f"{label}_TOOL_ERROR={text_from_result(result)}")
     text = text_from_result(result)
     if knowledge_id not in text:
-        raise RuntimeError(
-            f"{label}_EXPECTED_MISSING mode={mode} id={knowledge_id}"
-        )
+        raise RuntimeError(f"{label}_EXPECTED_MISSING mode={mode} id={knowledge_id}")
     return text
 
 
@@ -162,7 +211,9 @@ async def kg_tag_require(session, *, tag: str, timeout: int, label: str):
 async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: int):
     rows = load(metadata)
     if len(rows) != expected:
-        raise RuntimeError(f"REUSABLE_ASSET_COUNT_MISMATCH expected={expected} actual={len(rows)}")
+        raise RuntimeError(
+            f"REUSABLE_ASSET_COUNT_MISMATCH expected={expected} actual={len(rows)}"
+        )
 
     ids = [str(row.get("knowledge_id") or "") for row in rows]
     if any(not value for value in ids):
@@ -170,8 +221,21 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     if len(set(ids)) != len(ids):
         raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_DUPLICATE")
 
-    case_probe = first_embedded_probe(rows, "cases", "case_id")
-    relationship_probe = first_embedded_probe(rows, "relationships", "relationship_id")
+    relationships_path = metadata.parent / "relationships.jsonl"
+    cases_path = metadata.parent / "cases.jsonl"
+    relationships = load_optional_jsonl(relationships_path, "REUSABLE_RELATIONSHIP")
+    cases = load_optional_jsonl(cases_path, "REUSABLE_CASE")
+    if not relationships:
+        raise RuntimeError(f"REUSABLE_RELATIONSHIP_SIDECAR_EMPTY={relationships_path}")
+    if not cases:
+        raise RuntimeError(f"REUSABLE_CASE_SIDECAR_EMPTY={cases_path}")
+
+    sidecar_case_probe = case_probe(rows, cases)
+    sidecar_relationship_probe = relationship_probe(rows, relationships)
+    if sidecar_case_probe is None:
+        raise RuntimeError("REUSABLE_CASE_SIDECAR_NO_SEARCHABLE_TARGET")
+    if sidecar_relationship_probe is None:
+        raise RuntimeError("REUSABLE_RELATIONSHIP_SIDECAR_NO_SEARCHABLE_TARGET")
     dependency_probe = first_dependency_probe(rows)
 
     env = dict(os.environ)
@@ -204,7 +268,6 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         )
                     print(f"MCP_REUSABLE_INITIALIZE=PASS TOOLS={len(names)}")
 
-                    # Every Knowledge Unit must remain exactly retrievable by stable ID.
                     for row in rows:
                         knowledge_id = str(row["knowledge_id"])
                         parent_asset_id = str(row.get("parent_asset_id") or "")
@@ -225,51 +288,35 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
                     )
 
-                    # Structured case/relationship sidecars are not archival-only: their
-                    # stable IDs are rendered into the existing searchable corpus.
-                    case_checks = 0
-                    if case_probe:
-                        row, _case, case_id = case_probe
-                        await search_and_require(
-                            session,
-                            query=case_id,
-                            knowledge_id=str(row["knowledge_id"]),
-                            mode="bm25",
-                            timeout=timeout,
-                            label=f"MCP_REUSABLE_CASE_{case_id}",
-                        )
-                        case_checks = 1
-                        print(
-                            f"MCP_REUSABLE_CASE_SEARCH=PASS CASE={case_id} "
-                            f"ID={row['knowledge_id']}"
-                        )
-                    else:
-                        print("MCP_REUSABLE_CASE_SEARCH=PASS CASES=0 SKIP=NO_EMBEDDED_CASE")
+                    case_row, case, case_id = sidecar_case_probe
+                    await search_and_require(
+                        session,
+                        query=case_id,
+                        knowledge_id=str(case_row["knowledge_id"]),
+                        mode="bm25",
+                        timeout=timeout,
+                        label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
+                    )
+                    print(
+                        f"MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASE={case_id} "
+                        f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
+                    )
 
-                    relationship_checks = 0
-                    if relationship_probe:
-                        row, _rel, relationship_id = relationship_probe
-                        await search_and_require(
-                            session,
-                            query=relationship_id,
-                            knowledge_id=str(row["knowledge_id"]),
-                            mode="bm25",
-                            timeout=timeout,
-                            label=f"MCP_REUSABLE_RELATIONSHIP_{relationship_id}",
-                        )
-                        relationship_checks = 1
-                        print(
-                            f"MCP_REUSABLE_RELATIONSHIP_SEARCH=PASS RELATIONSHIP={relationship_id} "
-                            f"ID={row['knowledge_id']}"
-                        )
-                    else:
-                        print(
-                            "MCP_REUSABLE_RELATIONSHIP_SEARCH=PASS RELATIONSHIPS=0 "
-                            "SKIP=NO_EMBEDDED_RELATIONSHIP"
-                        )
+                    relationship_row, relationship, relationship_id = sidecar_relationship_probe
+                    await search_and_require(
+                        session,
+                        query=relationship_id,
+                        knowledge_id=str(relationship_row["knowledge_id"]),
+                        mode="bm25",
+                        timeout=timeout,
+                        label=f"MCP_REUSABLE_SIDECAR_RELATIONSHIP_{relationship_id}",
+                    )
+                    print(
+                        "MCP_REUSABLE_SIDECAR_RELATIONSHIP_SEARCH=PASS "
+                        f"RELATIONSHIP={relationship_id} ID={relationship_row['knowledge_id']} "
+                        f"SIDECAR={len(relationships)}"
+                    )
 
-                    # One representative of every Knowledge Kind must be usable through
-                    # all three existing retrieval modes, not BM25 alone.
                     natural = 0
                     vector = 0
                     hybrid = 0
@@ -300,9 +347,6 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             f"ID={knowledge_id} MODES=bm25,vector,hybrid"
                         )
 
-                    # MVS 4.1.14 kg_stats exposes total_entities + relationships but not
-                    # doc-section count. Document presence and reusable semantics are
-                    # therefore proven through kg_query tag lookups.
                     kg_stats = await wait(
                         session.call_tool("kg_stats", arguments={}),
                         timeout,
@@ -327,23 +371,31 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         timeout=timeout,
                         label="MCP_REUSABLE_KG_TAG_QUERY",
                     )
+                    await kg_tag_require(
+                        session,
+                        tag=f"relationship-id-{safe_tag(relationship_id)}",
+                        timeout=timeout,
+                        label="MCP_REUSABLE_KG_RELATIONSHIP_ID_TAG_QUERY",
+                    )
+                    await kg_tag_require(
+                        session,
+                        tag=f"case-id-{safe_tag(case_id)}",
+                        timeout=timeout,
+                        label="MCP_REUSABLE_KG_CASE_ID_TAG_QUERY",
+                    )
 
+                    relation = str(relationship.get("relation") or "").strip()
                     kg_relation_checks = 0
-                    if relationship_probe:
-                        _row, relationship, _relationship_id = relationship_probe
-                        relation = str(relationship.get("relation") or "").strip()
-                        if relation:
-                            await kg_tag_require(
-                                session,
-                                tag=f"relation-{safe_tag(relation)}",
-                                timeout=timeout,
-                                label="MCP_REUSABLE_KG_RELATION_TAG_QUERY",
-                            )
-                            kg_relation_checks = 1
-                    if not kg_relation_checks:
-                        print(
-                            "MCP_REUSABLE_KG_RELATION_TAG_QUERY=PASS SKIP=NO_RELATION_SEMANTIC"
+                    if relation:
+                        await kg_tag_require(
+                            session,
+                            tag=f"relation-{safe_tag(relation)}",
+                            timeout=timeout,
+                            label="MCP_REUSABLE_KG_RELATION_TAG_QUERY",
                         )
+                        kg_relation_checks = 1
+                    else:
+                        print("MCP_REUSABLE_KG_RELATION_TAG_QUERY=PASS SKIP=NO_RELATION_SEMANTIC")
 
                     kg_dependency_checks = 0
                     if dependency_probe:
@@ -355,10 +407,8 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             label="MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY",
                         )
                         kg_dependency_checks = 1
-                    if not kg_dependency_checks:
-                        print(
-                            "MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY=PASS SKIP=NO_CATALOG_DEPENDENCY"
-                        )
+                    else:
+                        print("MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY=PASS SKIP=NO_CATALOG_DEPENDENCY")
 
             errlog.flush()
             errlog.seek(0)
@@ -376,8 +426,9 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     print(
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
         f"KNOWLEDGE_KINDS={len(kind_first)} BM25_NATURAL={natural} VECTOR={vector} "
-        f"HYBRID={hybrid} CASE_SEARCH={case_checks} RELATIONSHIP_SEARCH={relationship_checks} "
-        f"KG_RELATION={kg_relation_checks} KG_DEPENDENCY={kg_dependency_checks} KG=PASS"
+        f"HYBRID={hybrid} SIDECAR_CASE_SEARCH=1 SIDECAR_RELATIONSHIP_SEARCH=1 "
+        f"KG_RELATION={kg_relation_checks} KG_DEPENDENCY={kg_dependency_checks} "
+        "KG_SIDECAR_IDS=PASS KG=PASS"
     )
 
 
