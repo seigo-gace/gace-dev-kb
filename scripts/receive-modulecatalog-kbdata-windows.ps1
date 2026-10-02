@@ -9,10 +9,13 @@ $Repo = Join-Path $Root 'repo'
 $Acceptor = Join-Path $Repo 'scripts\accept_modulecatalog_delivery.py'
 $Activator = Join-Path $Repo 'scripts\activate-modulecatalog-accepted-windows.ps1'
 $Recovery = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
-$RuntimeLinkPrefixer = Join-Path $Repo 'scripts\prefix_modulecatalog_runtime_links.py'
 $ManifestPath = Join-Path $DeliveryRoot 'manifest.json'
-foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$Recovery,$RuntimeLinkPrefixer,$DeliveryRoot,$ManifestPath)) {
+foreach ($path in @($Repo,$Python,$Acceptor,$Activator,$Recovery,$DeliveryRoot,$ManifestPath)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
+}
+$PowerShellHost = (Get-Process -Id $PID).Path
+if (-not $PowerShellHost -or -not (Test-Path $PowerShellHost)) {
+    throw "MODULECATALOG_RECEIVER_POWERSHELL_HOST_MISSING=$PowerShellHost"
 }
 
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
@@ -21,6 +24,7 @@ $ActivationJournal = Join-Path $IntakeRoot 'activation-transaction.json'
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 $LockPath = Join-Path $IntakeRoot 'receive.lock'
 $LockStream = $null
+$OwnsReceiveLock = $false
 try {
     try {
         $LockStream = [System.IO.File]::Open(
@@ -29,6 +33,7 @@ try {
             [System.IO.FileAccess]::ReadWrite,
             [System.IO.FileShare]::None
         )
+        $OwnsReceiveLock = $true
     }
     catch {
         throw "MODULECATALOG_RECEIVER_BUSY=$LockPath"
@@ -77,20 +82,13 @@ try {
     }
     if ([string]$Receipt.status -ne 'ACCEPTED') { throw "DELIVERY_RECEIPT_STATUS_INVALID=$($Receipt.status)" }
 
-    # The accepted projection is runtime-derived, not canonical producer data. Its
-    # frontmatter related links are created before activation, while activation
-    # intentionally prefixes every ModuleCatalog runtime filename to isolate it
-    # from the pre-existing KB corpus. Rewrite those link targets now so MVS KG
-    # LINKS_TO edges still point at the actual prefixed runtime documents.
+    # Keep the accepted projection immutable after admission. Runtime filename/link
+    # adaptation belongs to activation's staging copy, never to accepted authority.
     $AcceptedCorpus = Join-Path $AcceptedRoot 'projection\records'
     if (-not (Test-Path $AcceptedCorpus)) { throw "ACCEPTED_CORPUS_MISSING=$AcceptedCorpus" }
-    $RuntimePrefix = "accepted-modulecatalog-reusable-$($CatalogCommit.Substring(0,12))-"
-    Write-Host '=== KB RECEIVE: ALIGN RUNTIME KG LINKS ==='
-    & $Python -B $RuntimeLinkPrefixer --corpus $AcceptedCorpus --prefix $RuntimePrefix
-    if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_RUNTIME_LINK_PREFIX_FAILED=$LASTEXITCODE" }
 
     Write-Host '=== KB OPERATE: INDEX + MCP + ATOMIC CURRENT SWITCH ==='
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Activator -Root $Root -AcceptedRoot $AcceptedRoot -ReceiptPath $ReceiptPath
+    & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $Activator -Root $Root -AcceptedRoot $AcceptedRoot -ReceiptPath $ReceiptPath
     if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_DELIVERY_ACTIVATION_FAILED=$LASTEXITCODE" }
 
     $FinalReceipt = Get-Content $ReceiptPath -Raw | ConvertFrom-Json
@@ -107,5 +105,7 @@ finally {
         $LockStream.Dispose()
         $LockStream = $null
     }
-    Remove-Item $LockPath -Force -ErrorAction SilentlyContinue
+    if ($OwnsReceiveLock) {
+        Remove-Item $LockPath -Force -ErrorAction SilentlyContinue
+    }
 }
