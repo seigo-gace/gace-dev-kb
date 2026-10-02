@@ -3,8 +3,8 @@
 
 The transported bundle remains canonical and untouched. This operates only on the
 local derived Markdown corpus, adding deterministic YAML frontmatter that the
-installed mcp-vector-search 4.1.14 runtime can use for DocSection tags and
-cross-document links in its Knowledge Graph.
+installed mcp-vector-search 4.1.14 runtime can use for search tags and
+cross-document Knowledge Graph links.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def load_optional_jsonl(path: Path) -> list[dict[str, Any]]:
+def load_optional_jsonl(path: Path, label: str) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     rows: list[dict[str, Any]] = []
@@ -37,7 +37,7 @@ def load_optional_jsonl(path: Path) -> list[dict[str, Any]]:
             continue
         value = json.loads(line)
         if not isinstance(value, dict):
-            raise RuntimeError(f"RUNTIME_RELATIONSHIP_OBJECT_REQUIRED={path}:{line_number}")
+            raise RuntimeError(f"RUNTIME_{label}_OBJECT_REQUIRED={path}:{line_number}")
         rows.append(value)
     return rows
 
@@ -56,13 +56,6 @@ def runtime_relationships_for(
     row: dict[str, Any],
     global_relationships: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return producer relationships relevant to one runtime document.
-
-    Unit-level edges attach to the matching unit document. Asset-level edges attach
-    to the Asset's discovery document. This allows future producer relationship
-    kinds to reach the existing MVS graph without requiring the importer to know
-    every future relation enum in advance.
-    """
     knowledge_id = str(row.get("knowledge_id") or "")
     asset_id = str(row.get("parent_asset_id") or "")
     kind = str(row.get("knowledge_kind") or "")
@@ -88,18 +81,53 @@ def runtime_relationships_for(
     return combined
 
 
+def runtime_cases_for(
+    row: dict[str, Any],
+    global_cases: list[dict[str, Any]],
+    source_owners: dict[tuple[str, str], set[str]],
+) -> list[dict[str, Any]]:
+    knowledge_id = str(row.get("knowledge_id") or "")
+    asset_id = str(row.get("parent_asset_id") or "")
+    kind = str(row.get("knowledge_kind") or "")
+    combined: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for case in list(row.get("cases") or []) + global_cases:
+        if not isinstance(case, dict):
+            continue
+        if str(case.get("parent_asset_id") or "") != asset_id:
+            continue
+        source_test = str(case.get("source_test") or "")
+        owners = source_owners.get((asset_id, source_test), set()) if source_test else set()
+        relevant = knowledge_id in owners
+        if not owners and kind == "discovery":
+            relevant = True
+        if case in (row.get("cases") or []):
+            relevant = True
+        if not relevant:
+            continue
+        case_id = str(case.get("case_id") or "")
+        dedupe_key = case_id or json.dumps(case, sort_keys=True, ensure_ascii=False)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        combined.append(case)
+    return combined
+
+
 def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
     asset_id = str(row.get("parent_asset_id") or "")
     knowledge_id = str(row.get("knowledge_id") or "")
     kind = str(row.get("knowledge_kind") or "unknown")
     lifecycle = row.get("lifecycle") if isinstance(row.get("lifecycle"), dict) else {}
     verification = row.get("verification") if isinstance(row.get("verification"), dict) else {}
-    classification = (
-        row.get("classification") if isinstance(row.get("classification"), dict) else {}
-    )
+    classification = row.get("classification") if isinstance(row.get("classification"), dict) else {}
     composition = row.get("composition") if isinstance(row.get("composition"), dict) else {}
     if not asset_id or not knowledge_id:
         raise RuntimeError("CORPUS_FRONTMATTER_IDENTITY_MISSING")
+
+    relationships = [value for value in (row.get("relationships") or []) if isinstance(value, dict)]
+    cases = [value for value in (row.get("cases") or []) if isinstance(value, dict)]
 
     tags: list[str] = [
         BASE_TAG,
@@ -115,21 +143,36 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
     for value in classification.get("tags") or []:
         tags.append(f"catalog-tag-{safe_tag(value)}")
 
-    for rel in row.get("relationships") or []:
-        if not isinstance(rel, dict):
-            continue
+    relationship_ids: list[str] = []
+    for rel in relationships:
         relation = str(rel.get("relation") or "").strip()
         relationship_id = str(rel.get("relationship_id") or "").strip()
         if relation:
             tags.append(f"relation-{safe_tag(relation)}")
         if relationship_id:
+            relationship_ids.append(relationship_id)
             tags.append(f"relationship-id-{safe_tag(relationship_id)}")
+
+    case_ids: list[str] = []
+    for case in cases:
+        case_id = str(case.get("case_id") or "").strip()
+        case_type = str(case.get("case_type") or "").strip()
+        result = str(case.get("result") or "").strip()
+        if case_id:
+            case_ids.append(case_id)
+            tags.append(f"case-id-{safe_tag(case_id)}")
+        if case_type:
+            tags.append(f"case-type-{safe_tag(case_type)}")
+        if result:
+            tags.append(f"case-result-{safe_tag(result)}")
 
     if kind == "discovery":
         for dependency in composition.get("depends_on") or []:
             tags.append(f"depends-on-{safe_tag(dependency)}")
 
     tags = list(dict.fromkeys(tags))
+    relationship_ids = list(dict.fromkeys(relationship_ids))
+    case_ids = list(dict.fromkeys(case_ids))
 
     lines = [
         "---",
@@ -137,8 +180,14 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
         f"gace_knowledge_id: {q(knowledge_id)}",
         f"gace_parent_asset_id: {q(asset_id)}",
         f"gace_knowledge_kind: {q(kind)}",
-        "tags:",
     ]
+    if relationship_ids:
+        lines.append("gace_relationship_ids:")
+        lines.extend(f"  - {q(value)}" for value in relationship_ids)
+    if case_ids:
+        lines.append("gace_case_ids:")
+        lines.extend(f"  - {q(value)}" for value in case_ids)
+    lines.append("tags:")
     lines.extend(f"  - {q(tag)}" for tag in tags)
     if related_files:
         lines.append("related:")
@@ -151,7 +200,8 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     metadata_path = metadata_path.resolve()
     corpus_dir = corpus_dir.resolve()
     rows = load_jsonl(metadata_path)
-    global_relationships = load_optional_jsonl(metadata_path.parent / "relationships.jsonl")
+    global_relationships = load_optional_jsonl(metadata_path.parent / "relationships.jsonl", "RELATIONSHIP")
+    global_cases = load_optional_jsonl(metadata_path.parent / "cases.jsonl", "CASE")
     files = sorted(corpus_dir.glob("*.md"))
     if len(files) != len(rows):
         raise RuntimeError(
@@ -160,8 +210,9 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
 
     unit_to_file: dict[str, str] = {}
     asset_to_preferred_file: dict[str, str] = {}
+    source_owners: dict[tuple[str, str], set[str]] = {}
     explicit_contains_targets: dict[str, set[str]] = {}
-    runtime_rows: list[dict[str, Any]] = []
+
     for row, path in zip(rows, files, strict=True):
         knowledge_id = str(row.get("knowledge_id") or "")
         asset_id = str(row.get("parent_asset_id") or "")
@@ -177,10 +228,17 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         unit_to_file[knowledge_id] = path.name
         if asset_id not in asset_to_preferred_file or row.get("knowledge_kind") == "discovery":
             asset_to_preferred_file[asset_id] = path.name
+        for source_path in row.get("source_paths") or []:
+            source_owners.setdefault((asset_id, str(source_path)), set()).add(knowledge_id)
 
+    runtime_rows: list[dict[str, Any]] = []
+    for row in rows:
         runtime_row = dict(row)
         runtime_row["relationships"] = runtime_relationships_for(row, global_relationships)
+        runtime_row["cases"] = runtime_cases_for(row, global_cases, source_owners)
         runtime_rows.append(runtime_row)
+        asset_id = str(row.get("parent_asset_id") or "")
+        knowledge_id = str(row.get("knowledge_id") or "")
         for rel in runtime_row["relationships"]:
             if (
                 str(rel.get("relation") or "") == "contains"
@@ -193,6 +251,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     relation_link_docs = 0
     dependency_link_docs = 0
     containment_link_docs = 0
+    case_docs = 0
     for row, path in zip(runtime_rows, files, strict=True):
         current = path.read_text(encoding="utf-8")
         if current.startswith("---\n"):
@@ -201,8 +260,6 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         related: list[str] = []
         relationship_added = False
         for rel in row.get("relationships") or []:
-            if not isinstance(rel, dict):
-                continue
             source = str(rel.get("from") or "")
             target = str(rel.get("to") or "")
             knowledge_id = str(row.get("knowledge_id") or "")
@@ -245,13 +302,15 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         relation_link_docs += int(relationship_added)
         dependency_link_docs += int(dependency_added)
         containment_link_docs += int(containment_added)
+        case_docs += int(bool(row.get("cases")))
 
     print(
         f"GACE_MODULECATALOG_CORPUS_ENRICH=PASS RECORDS={written} "
         f"TAG={BASE_TAG} RELATION_LINK_DOCS={relation_link_docs} "
         f"DEPENDENCY_LINK_DOCS={dependency_link_docs} "
         f"CONTAINMENT_LINK_DOCS={containment_link_docs} "
-        f"RELATIONSHIP_SIDECAR={len(global_relationships)}"
+        f"CASE_DOCS={case_docs} RELATIONSHIP_SIDECAR={len(global_relationships)} "
+        f"CASE_SIDECAR={len(global_cases)}"
     )
     return written
 
