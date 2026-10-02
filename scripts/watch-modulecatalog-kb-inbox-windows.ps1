@@ -15,6 +15,10 @@ $StopPath = Join-Path $IntakeRoot 'receiver.stop'
 foreach ($path in @($Repo,$Processor,$Python)) {
     if (-not (Test-Path $path)) { throw "RECEIVER_SERVICE_REQUIRED_PATH_MISSING=$path" }
 }
+$PowerShellHost = (Get-Process -Id $PID).Path
+if (-not $PowerShellHost -or -not (Test-Path $PowerShellHost)) {
+    throw "RECEIVER_SERVICE_POWERSHELL_HOST_MISSING=$PowerShellHost"
+}
 New-Item -ItemType Directory -Path $IntakeRoot -Force | Out-Null
 
 function Write-ServiceEvent {
@@ -36,8 +40,8 @@ function Write-ServiceEvent {
     finally { $stream.Dispose() }
 }
 
-Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds Once=$Once"
-Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds ONCE=$Once"
+Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds Once=$Once Host=$PowerShellHost"
+Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds ONCE=$Once HOST=$PowerShellHost"
 
 while ($true) {
     if (Test-Path $StopPath) {
@@ -47,7 +51,7 @@ while ($true) {
     }
 
     try {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Processor -Root $Root -Python $Python
+        & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $Processor -Root $Root -Python $Python
         if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_INBOX_PROCESSOR_FAILED=$LASTEXITCODE" }
         Write-ServiceEvent -Status 'POLL_PASS' -Message 'Inbox processor completed.'
     }
