@@ -2,6 +2,7 @@ param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
     [ValidateRange(1,3600)][int]$PollSeconds = 10,
+    [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(1,999)][int]$RestartCount = 12,
     [ValidateRange(1,60)][int]$RestartIntervalMinutes = 1,
@@ -59,6 +60,7 @@ $arguments = @(
     '-Root',('"' + $Root + '"'),
     '-Python',('"' + $Python + '"'),
     '-PollSeconds',[string]$PollSeconds,
+    '-RetryBackoffSeconds',[string]$RetryBackoffSeconds,
     '-HeartbeatSeconds',[string]$HeartbeatSeconds
 ) -join ' '
 
@@ -115,6 +117,6 @@ if ($task.State -ne 'Running') {
     throw "RECEIVER_TASK_NOT_RUNNING_AFTER_START=$($task.State)"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) POLL_SECONDS=$PollSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
