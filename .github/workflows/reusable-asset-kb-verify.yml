@@ -199,12 +199,70 @@ jobs:
           assert required <= kinds, sorted(kinds)
           assert all(row['verification']['status'] == 'verified' for row in metadata)
           assert all(row['_gace']['commit'] == commit for row in metadata)
+          assert all('identity' in row and 'integrity' in row and 'files' in row['integrity'] for row in metadata)
           dependency_tagged = sum('depends-on-' in path.read_text() for path in corpus)
           relation_tagged = sum('relation-' in path.read_text() for path in corpus)
           print(
               'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS '
               f'ASSETS=80 RECORDS=720 RELATIONSHIPS={len(relationships)} CASES=160 '
               f'KINDS={len(kinds)} DEPENDENCY_TAGGED_DOCS={dependency_tagged} '
-              f'RELATION_TAGGED_DOCS={relation_tagged} KG_READY=YES'
+              f'RELATION_TAGGED_DOCS={relation_tagged} IDENTITY_INTEGRITY=PASS KG_READY=YES'
           )
           PY
+
+  windows-receiver-task:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Exercise Scheduled Task installer on Windows PowerShell
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Root = Join-Path $env:RUNNER_TEMP ('gace-task-' + [Guid]::NewGuid().ToString('N'))
+          $Repo = Join-Path $Root 'repo'
+          $Scripts = Join-Path $Repo 'scripts'
+          $Python = (Get-Command python.exe -ErrorAction Stop).Source
+          New-Item -ItemType Directory -Path $Scripts -Force | Out-Null
+          Copy-Item 'scripts\watch-modulecatalog-kb-inbox-windows.ps1' (Join-Path $Scripts 'watch-modulecatalog-kb-inbox-windows.ps1') -Force
+
+          $MockProcessor = @'
+          param([string]$Root,[string]$Python)
+          Start-Sleep -Seconds 2
+          Write-Host 'WINDOWS_TASK_MOCK_PROCESSOR=PASS'
+          exit 0
+          '@
+          [System.IO.File]::WriteAllText(
+            (Join-Path $Scripts 'process-modulecatalog-inbox-windows.ps1'),
+            $MockProcessor,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          try {
+            & .\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 `
+              -Root $Root `
+              -Python $Python `
+              -PollSeconds 1 `
+              -RetryBackoffSeconds 1 `
+              -HeartbeatSeconds 5 `
+              -RuntimeHealthSeconds 0 `
+              -StartupVerifySeconds 30
+            if ($LASTEXITCODE -ne 0) { throw "WINDOWS_RECEIVER_TASK_INSTALL_FAILED=$LASTEXITCODE" }
+
+            $Task = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction Stop
+            if ($Task.State -ne 'Running') { throw "WINDOWS_RECEIVER_TASK_NOT_RUNNING=$($Task.State)" }
+            $Log = Join-Path $Root 'data\knowledge-intake\modulecatalog\receiver-service.jsonl'
+            $Lock = Join-Path $Root 'data\knowledge-intake\modulecatalog\receiver-service.lock'
+            if (-not (Test-Path $Log) -or -not (Test-Path $Lock)) { throw 'WINDOWS_RECEIVER_TASK_RUNTIME_EVIDENCE_MISSING' }
+            $Events = @(Get-Content $Log | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+            if (@($Events | Where-Object { $_.status -eq 'STARTED' }).Count -lt 1) { throw 'WINDOWS_RECEIVER_TASK_STARTED_EVENT_MISSING' }
+            Write-Host 'GACE_MODULECATALOG_WINDOWS_TASK_E2E=PASS STARTUP=VERIFIED'
+          }
+          finally {
+            & .\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 -Root $Root -Python $Python -Uninstall
+            Start-Sleep -Seconds 1
+            $Remaining = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction SilentlyContinue
+            if ($null -ne $Remaining) { throw 'WINDOWS_RECEIVER_TASK_UNINSTALL_FAILED' }
+            Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
+          }
