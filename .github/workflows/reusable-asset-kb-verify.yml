@@ -58,6 +58,7 @@ jobs:
             'scripts/watch-modulecatalog-kb-inbox-windows.ps1',
             'scripts/configure-modulecatalog-kb-receiver-task-windows.ps1',
             'scripts/check-modulecatalog-kb-runtime-windows.ps1',
+            'scripts/prune-modulecatalog-kb-retention-windows.ps1',
             'tests/test_modulecatalog_inbox_lifecycle.ps1',
             'tests/test_modulecatalog_transport_readiness.ps1',
             'tests/test_modulecatalog_receiver_timeout.ps1',
@@ -65,7 +66,8 @@ jobs:
             'tests/test_modulecatalog_activation_recovery.ps1',
             'tests/test_modulecatalog_runtime_health_lock.ps1',
             'tests/test_modulecatalog_receiver_service.ps1',
-            'tests/test_modulecatalog_receiver_backoff.ps1'
+            'tests/test_modulecatalog_receiver_backoff.ps1',
+            'tests/test_modulecatalog_retention.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -113,6 +115,10 @@ jobs:
       - name: Continuous receiver retry backoff
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_backoff.ps1
+
+      - name: Operational retention bounds
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_retention.ps1
 
       - name: Preserve non-Catalog rich runtime corpus
         run: python -B tests/test_copy_preserved_kb_runtime_corpus.py
@@ -247,6 +253,7 @@ jobs:
               -RetryBackoffSeconds 1 `
               -HeartbeatSeconds 5 `
               -RuntimeHealthSeconds 0 `
+              -RetentionSeconds 0 `
               -StartupVerifySeconds 30
 
             $Task = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction Stop
