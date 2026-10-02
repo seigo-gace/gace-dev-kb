@@ -15,6 +15,21 @@ from mcp.client.stdio import stdio_client
 
 REQUIRED_TOOLS = {"search_code", "kg_stats", "kg_query"}
 KG_RUNTIME_TAG = "gace-reusable-asset"
+EXACT_SEARCH_LIMIT = 10
+SIDECAR_SEARCH_LIMIT = 10
+NATURAL_SEARCH_LIMIT = 50
+WINDOWS_SAFE_ENV = {
+    "MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING": "1",
+    "MCP_VECTOR_SEARCH_WORKERS": "1",
+    "MCP_VECTOR_SEARCH_MAX_WORKERS": "1",
+    "MCP_VECTOR_SEARCH_BATCH_SIZE": "8",
+    "MCP_VECTOR_SEARCH_FILE_BATCH_SIZE": "16",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+}
 
 
 def text_from_result(result):
@@ -147,6 +162,16 @@ def case_probe(rows, cases):
     return None
 
 
+def build_server_env(root: Path):
+    env = dict(os.environ)
+    env["MCP_ENABLE_FILE_WATCHING"] = "false"
+    env["MCP_PROJECT_ROOT"] = str(root)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if os.name == "nt":
+        env.update(WINDOWS_SAFE_ENV)
+    return env
+
+
 async def wait(awaitable, seconds, label):
     try:
         async with asyncio.timeout(seconds):
@@ -163,13 +188,14 @@ async def search_and_require(
     mode: str,
     timeout: int,
     label: str,
+    result_limit: int = NATURAL_SEARCH_LIMIT,
 ):
     result = await wait(
         session.call_tool(
             "search_code",
             arguments={
                 "query": query,
-                "limit": 50,
+                "limit": result_limit,
                 "similarity_threshold": 0.0,
                 "search_mode": mode,
                 "use_rerank": False,
@@ -183,7 +209,9 @@ async def search_and_require(
         raise RuntimeError(f"{label}_TOOL_ERROR={text_from_result(result)}")
     text = text_from_result(result)
     if knowledge_id not in text:
-        raise RuntimeError(f"{label}_EXPECTED_MISSING mode={mode} id={knowledge_id}")
+        raise RuntimeError(
+            f"{label}_EXPECTED_MISSING mode={mode} id={knowledge_id} limit={result_limit}"
+        )
     return text
 
 
@@ -233,10 +261,13 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
         raise RuntimeError("REUSABLE_RELATIONSHIP_SIDECAR_NO_SEARCHABLE_TARGET")
     dependency_probe = first_dependency_probe(rows)
 
-    env = dict(os.environ)
-    env["MCP_ENABLE_FILE_WATCHING"] = "false"
-    env["MCP_PROJECT_ROOT"] = str(root)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env = build_server_env(root)
+    if os.name == "nt":
+        print(
+            "MCP_REUSABLE_WINDOWS_SAFETY=PASS "
+            "MULTIPROCESSING=DISABLED WORKERS=1 EMBEDDING_BATCH=8 "
+            "FILE_BATCH=16 NATIVE_THREADS=1"
+        )
     server = StdioServerParameters(
         command=str(python),
         args=["-m", "mcp_vector_search.mcp", str(root)],
@@ -246,6 +277,10 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
 
     kind_first = {}
     asset_ids = set()
+    natural = vector = hybrid = 0
+    case_checks = relationship_checks = 0
+    kg_relation_checks = kg_dependency_checks = 0
+
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
         try:
             async with stdio_client(server, errlog=errlog) as (read_stream, write_stream):
@@ -263,7 +298,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         )
                     print(f"MCP_REUSABLE_INITIALIZE=PASS TOOLS={len(names)}")
 
-                    for row in rows:
+                    for index, row in enumerate(rows, 1):
                         knowledge_id = str(row["knowledge_id"])
                         parent_asset_id = str(row.get("parent_asset_id") or "")
                         if not parent_asset_id:
@@ -278,12 +313,18 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             mode="bm25",
                             timeout=timeout,
                             label=f"MCP_REUSABLE_BM25_{knowledge_id}",
+                            result_limit=EXACT_SEARCH_LIMIT,
                         )
+                        if index % 50 == 0 or index == len(rows):
+                            print(
+                                f"MCP_REUSABLE_EXACT_BM25_PROGRESS={index}/{len(rows)} "
+                                f"LIMIT={EXACT_SEARCH_LIMIT}"
+                            )
                     print(
-                        f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
+                        f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} "
+                        f"ASSETS={len(asset_ids)} LIMIT={EXACT_SEARCH_LIMIT}"
                     )
 
-                    case_checks = 0
                     case_id = ""
                     if sidecar_case_probe is not None:
                         case_row, _case, case_id = sidecar_case_probe
@@ -294,6 +335,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             mode="bm25",
                             timeout=timeout,
                             label=f"MCP_REUSABLE_SIDECAR_CASE_{case_id}",
+                            result_limit=SIDECAR_SEARCH_LIMIT,
                         )
                         case_checks = 1
                         print(
@@ -301,9 +343,11 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             f"ID={case_row['knowledge_id']} SIDECAR={len(cases)}"
                         )
                     else:
-                        print("MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS CASES=0 SKIP=NO_CASE_SIDECAR")
+                        print(
+                            "MCP_REUSABLE_SIDECAR_CASE_SEARCH=PASS "
+                            "CASES=0 SKIP=NO_CASE_SIDECAR"
+                        )
 
-                    relationship_checks = 0
                     relationship = None
                     relationship_id = ""
                     if sidecar_relationship_probe is not None:
@@ -315,6 +359,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             mode="bm25",
                             timeout=timeout,
                             label=f"MCP_REUSABLE_SIDECAR_RELATIONSHIP_{relationship_id}",
+                            result_limit=SIDECAR_SEARCH_LIMIT,
                         )
                         relationship_checks = 1
                         print(
@@ -328,15 +373,13 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             "RELATIONSHIPS=0 SKIP=NO_RELATIONSHIP_SIDECAR"
                         )
 
-                    natural = 0
-                    vector = 0
-                    hybrid = 0
                     for knowledge_kind, row in sorted(kind_first.items()):
                         query = natural_query(row)
                         knowledge_id = str(row["knowledge_id"])
                         if not query:
                             raise RuntimeError(
-                                f"MCP_REUSABLE_NATURAL_QUERY_EMPTY kind={knowledge_kind} id={knowledge_id}"
+                                f"MCP_REUSABLE_NATURAL_QUERY_EMPTY "
+                                f"kind={knowledge_kind} id={knowledge_id}"
                             )
                         for mode in ("bm25", "vector", "hybrid"):
                             await search_and_require(
@@ -346,6 +389,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                                 mode=mode,
                                 timeout=timeout,
                                 label=f"MCP_REUSABLE_{mode.upper()}_{knowledge_kind}",
+                                result_limit=NATURAL_SEARCH_LIMIT,
                             )
                             if mode == "bm25":
                                 natural += 1
@@ -370,10 +414,16 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                     stats = json_from_result(kg_stats, "MCP_REUSABLE_KG_STATS")
                     if str(stats.get("status") or "").lower() not in {"success", "ok"}:
                         raise RuntimeError(f"MCP_REUSABLE_KG_STATS_STATUS_INVALID={stats}")
-                    statistics = stats.get("statistics") if isinstance(stats.get("statistics"), dict) else {}
+                    statistics = (
+                        stats.get("statistics")
+                        if isinstance(stats.get("statistics"), dict)
+                        else {}
+                    )
                     total_entities = int(statistics.get("total_entities", 0) or 0)
                     if total_entities <= 0:
-                        raise RuntimeError(f"MCP_REUSABLE_KG_EMPTY entities={total_entities}")
+                        raise RuntimeError(
+                            f"MCP_REUSABLE_KG_EMPTY entities={total_entities}"
+                        )
                     print(f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities}")
 
                     await kg_tag_require(
@@ -404,9 +454,11 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             label="MCP_REUSABLE_KG_CASE_ID_TAG_QUERY",
                         )
                     else:
-                        print("MCP_REUSABLE_KG_CASE_ID_TAG_QUERY=PASS SKIP=NO_CASE_SIDECAR")
+                        print(
+                            "MCP_REUSABLE_KG_CASE_ID_TAG_QUERY=PASS "
+                            "SKIP=NO_CASE_SIDECAR"
+                        )
 
-                    kg_relation_checks = 0
                     relation = str((relationship or {}).get("relation") or "").strip()
                     if relation:
                         await kg_tag_require(
@@ -417,9 +469,11 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         )
                         kg_relation_checks = 1
                     else:
-                        print("MCP_REUSABLE_KG_RELATION_TAG_QUERY=PASS SKIP=NO_RELATION_SEMANTIC")
+                        print(
+                            "MCP_REUSABLE_KG_RELATION_TAG_QUERY=PASS "
+                            "SKIP=NO_RELATION_SEMANTIC"
+                        )
 
-                    kg_dependency_checks = 0
                     if dependency_probe:
                         _row, dependency = dependency_probe
                         await kg_tag_require(
@@ -430,7 +484,10 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         )
                         kg_dependency_checks = 1
                     else:
-                        print("MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY=PASS SKIP=NO_CATALOG_DEPENDENCY")
+                        print(
+                            "MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY=PASS "
+                            "SKIP=NO_CATALOG_DEPENDENCY"
+                        )
 
             errlog.flush()
             errlog.seek(0)
