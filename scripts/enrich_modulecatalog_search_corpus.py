@@ -2,9 +2,9 @@
 """Enrich accepted ModuleCatalog Markdown projection for the existing KB runtime.
 
 The transported bundle remains canonical and untouched. This operates only on the
-local derived Markdown corpus, adding deterministic YAML frontmatter that the
-installed mcp-vector-search 4.1.14 runtime can use for search tags and
-cross-document Knowledge Graph links.
+local derived Markdown corpus, adding deterministic YAML frontmatter plus a small
+runtime-reference body that the installed mcp-vector-search 4.1.14 runtime can use
+for BM25/search tags and cross-document Knowledge Graph links.
 """
 from __future__ import annotations
 
@@ -144,16 +144,20 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
         tags.append(f"catalog-tag-{safe_tag(value)}")
 
     relationship_ids: list[str] = []
+    relationship_types: list[str] = []
     for rel in relationships:
         relation = str(rel.get("relation") or "").strip()
         relationship_id = str(rel.get("relationship_id") or "").strip()
         if relation:
+            relationship_types.append(relation)
             tags.append(f"relation-{safe_tag(relation)}")
         if relationship_id:
             relationship_ids.append(relationship_id)
             tags.append(f"relationship-id-{safe_tag(relationship_id)}")
 
     case_ids: list[str] = []
+    case_types: list[str] = []
+    case_results: list[str] = []
     for case in cases:
         case_id = str(case.get("case_id") or "").strip()
         case_type = str(case.get("case_type") or "").strip()
@@ -162,8 +166,10 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
             case_ids.append(case_id)
             tags.append(f"case-id-{safe_tag(case_id)}")
         if case_type:
+            case_types.append(case_type)
             tags.append(f"case-type-{safe_tag(case_type)}")
         if result:
+            case_results.append(result)
             tags.append(f"case-result-{safe_tag(result)}")
 
     if kind == "discovery":
@@ -172,7 +178,10 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
 
     tags = list(dict.fromkeys(tags))
     relationship_ids = list(dict.fromkeys(relationship_ids))
+    relationship_types = list(dict.fromkeys(relationship_types))
     case_ids = list(dict.fromkeys(case_ids))
+    case_types = list(dict.fromkeys(case_types))
+    case_results = list(dict.fromkeys(case_results))
 
     lines = [
         "---",
@@ -193,6 +202,24 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
         lines.append("related:")
         lines.extend(f"  - {q(name)}" for name in related_files)
     lines.extend(["---", ""])
+
+    # MVS can parse YAML metadata separately from text chunks. Stable producer IDs
+    # must also remain in ordinary Markdown body text so exact BM25 retrieval does
+    # not depend on the runtime retaining frontmatter inside searchable content.
+    if relationship_ids or case_ids:
+        lines.extend(["## G-ACE Runtime Structured References", ""])
+        for value in relationship_ids:
+            lines.append(f"- Relationship ID: {value}")
+        for value in relationship_types:
+            lines.append(f"- Relationship Type: {value}")
+        for value in case_ids:
+            lines.append(f"- Case ID: {value}")
+        for value in case_types:
+            lines.append(f"- Case Type: {value}")
+        for value in case_results:
+            lines.append(f"- Case Result: {value}")
+        lines.append("")
+
     return "\n".join(lines)
 
 
