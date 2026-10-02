@@ -28,6 +28,20 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_optional_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"RUNTIME_RELATIONSHIP_OBJECT_REQUIRED={path}:{line_number}")
+        rows.append(value)
+    return rows
+
+
 def safe_tag(value: Any) -> str:
     text = str(value or "unknown").strip().lower()
     text = re.sub(r"[^0-9a-z._-]+", "-", text).strip("-")
@@ -35,8 +49,43 @@ def safe_tag(value: Any) -> str:
 
 
 def q(value: str) -> str:
-    # JSON double-quoted strings are valid YAML scalars and avoid colon/hash issues.
     return json.dumps(value, ensure_ascii=False)
+
+
+def runtime_relationships_for(
+    row: dict[str, Any],
+    global_relationships: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return producer relationships relevant to one runtime document.
+
+    Unit-level edges attach to the matching unit document. Asset-level edges attach
+    to the Asset's discovery document. This allows future producer relationship
+    kinds to reach the existing MVS graph without requiring the importer to know
+    every future relation enum in advance.
+    """
+    knowledge_id = str(row.get("knowledge_id") or "")
+    asset_id = str(row.get("parent_asset_id") or "")
+    kind = str(row.get("knowledge_kind") or "")
+    combined: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for rel in list(row.get("relationships") or []) + global_relationships:
+        if not isinstance(rel, dict):
+            continue
+        source = str(rel.get("from") or "")
+        target = str(rel.get("to") or "")
+        relevant = source == knowledge_id or target == knowledge_id
+        if kind == "discovery":
+            relevant = relevant or source == asset_id or target == asset_id
+        if not relevant:
+            continue
+        relation_id = str(rel.get("relationship_id") or "")
+        dedupe_key = relation_id or json.dumps(rel, sort_keys=True, ensure_ascii=False)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        combined.append(rel)
+    return combined
 
 
 def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
@@ -70,13 +119,12 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
         if not isinstance(rel, dict):
             continue
         relation = str(rel.get("relation") or "").strip()
+        relationship_id = str(rel.get("relationship_id") or "").strip()
         if relation:
             tags.append(f"relation-{safe_tag(relation)}")
+        if relationship_id:
+            tags.append(f"relationship-id-{safe_tag(relationship_id)}")
 
-    # Asset-level dependency semantics are canonical Catalog data. Project them
-    # only on the discovery document so the existing MVS KG gets one stable
-    # relationship-bearing node per Asset instead of duplicating the edge across
-    # every code/design/test Knowledge Unit.
     if kind == "discovery":
         for dependency in composition.get("depends_on") or []:
             tags.append(f"depends-on-{safe_tag(dependency)}")
@@ -103,6 +151,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     metadata_path = metadata_path.resolve()
     corpus_dir = corpus_dir.resolve()
     rows = load_jsonl(metadata_path)
+    global_relationships = load_optional_jsonl(metadata_path.parent / "relationships.jsonl")
     files = sorted(corpus_dir.glob("*.md"))
     if len(files) != len(rows):
         raise RuntimeError(
@@ -112,6 +161,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     unit_to_file: dict[str, str] = {}
     asset_to_preferred_file: dict[str, str] = {}
     explicit_contains_targets: dict[str, set[str]] = {}
+    runtime_rows: list[dict[str, Any]] = []
     for row, path in zip(rows, files, strict=True):
         knowledge_id = str(row.get("knowledge_id") or "")
         asset_id = str(row.get("parent_asset_id") or "")
@@ -128,9 +178,10 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         if asset_id not in asset_to_preferred_file or row.get("knowledge_kind") == "discovery":
             asset_to_preferred_file[asset_id] = path.name
 
-        for rel in row.get("relationships") or []:
-            if not isinstance(rel, dict):
-                continue
+        runtime_row = dict(row)
+        runtime_row["relationships"] = runtime_relationships_for(row, global_relationships)
+        runtime_rows.append(runtime_row)
+        for rel in runtime_row["relationships"]:
             if (
                 str(rel.get("relation") or "") == "contains"
                 and str(rel.get("from") or "") == asset_id
@@ -142,7 +193,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     relation_link_docs = 0
     dependency_link_docs = 0
     containment_link_docs = 0
-    for row, path in zip(rows, files, strict=True):
+    for row, path in zip(runtime_rows, files, strict=True):
         current = path.read_text(encoding="utf-8")
         if current.startswith("---\n"):
             raise RuntimeError(f"CORPUS_FRONTMATTER_ALREADY_PRESENT={path.name}")
@@ -178,11 +229,6 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
                     related.append(filename)
                     dependency_added = True
 
-            # The producer emits one explicit `asset contains knowledge-unit`
-            # relationship per unit. Represent those directed relationships in
-            # the existing MVS graph by making the Asset discovery document link
-            # to each explicitly-contained unit document. No relation is inferred
-            # when the producer did not emit a contains edge.
             for target_id in sorted(explicit_contains_targets.get(asset_id, set())):
                 filename = unit_to_file.get(target_id)
                 if filename and filename != path.name:
@@ -204,7 +250,8 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
         f"GACE_MODULECATALOG_CORPUS_ENRICH=PASS RECORDS={written} "
         f"TAG={BASE_TAG} RELATION_LINK_DOCS={relation_link_docs} "
         f"DEPENDENCY_LINK_DOCS={dependency_link_docs} "
-        f"CONTAINMENT_LINK_DOCS={containment_link_docs}"
+        f"CONTAINMENT_LINK_DOCS={containment_link_docs} "
+        f"RELATIONSHIP_SIDECAR={len(global_relationships)}"
     )
     return written
 
