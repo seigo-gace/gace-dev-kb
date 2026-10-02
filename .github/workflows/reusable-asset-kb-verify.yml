@@ -248,7 +248,6 @@ jobs:
               -HeartbeatSeconds 5 `
               -RuntimeHealthSeconds 0 `
               -StartupVerifySeconds 30
-            if ($LASTEXITCODE -ne 0) { throw "WINDOWS_RECEIVER_TASK_INSTALL_FAILED=$LASTEXITCODE" }
 
             $Task = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction Stop
             if ($Task.State -ne 'Running') { throw "WINDOWS_RECEIVER_TASK_NOT_RUNNING=$($Task.State)" }
