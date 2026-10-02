@@ -63,6 +63,45 @@ def natural_query(row):
     return " ".join(terms).strip()
 
 
+def first_embedded_probe(rows, collection_key, id_key):
+    for row in rows:
+        values = row.get(collection_key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            probe_id = str(value.get(id_key) or "").strip()
+            if probe_id:
+                return row, value, probe_id
+    return None
+
+
+def first_cross_unit_relationship_probe(rows):
+    known_units = {str(row.get("knowledge_id") or "") for row in rows}
+    known_units.discard("")
+    for row in rows:
+        current = str(row.get("knowledge_id") or "")
+        values = row.get("relationships")
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            source = str(value.get("from") or "")
+            target = str(value.get("to") or "")
+            relation_id = str(value.get("relationship_id") or "")
+            if (
+                relation_id
+                and source in known_units
+                and target in known_units
+                and source != target
+                and current in {source, target}
+            ):
+                return row, value, relation_id
+    return None
+
+
 async def wait(awaitable, seconds, label):
     try:
         async with asyncio.timeout(seconds):
@@ -116,6 +155,10 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     if len(set(ids)) != len(ids):
         raise RuntimeError("REUSABLE_ASSET_KNOWLEDGE_ID_DUPLICATE")
 
+    case_probe = first_embedded_probe(rows, "cases", "case_id")
+    relationship_probe = first_embedded_probe(rows, "relationships", "relationship_id")
+    cross_unit_relationship_probe = first_cross_unit_relationship_probe(rows)
+
     env = dict(os.environ)
     env["MCP_ENABLE_FILE_WATCHING"] = "false"
     env["MCP_PROJECT_ROOT"] = str(root)
@@ -166,6 +209,49 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                     print(
                         f"MCP_REUSABLE_EXACT_BM25=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)}"
                     )
+
+                    # Structured case/relationship sidecars are not archival-only: their
+                    # stable IDs are rendered into the existing searchable corpus.
+                    case_checks = 0
+                    if case_probe:
+                        row, _case, case_id = case_probe
+                        await search_and_require(
+                            session,
+                            query=case_id,
+                            knowledge_id=str(row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_CASE_{case_id}",
+                        )
+                        case_checks = 1
+                        print(
+                            f"MCP_REUSABLE_CASE_SEARCH=PASS CASE={case_id} "
+                            f"ID={row['knowledge_id']}"
+                        )
+                    else:
+                        print("MCP_REUSABLE_CASE_SEARCH=PASS CASES=0 SKIP=NO_EMBEDDED_CASE")
+
+                    relationship_checks = 0
+                    if relationship_probe:
+                        row, _rel, relationship_id = relationship_probe
+                        await search_and_require(
+                            session,
+                            query=relationship_id,
+                            knowledge_id=str(row["knowledge_id"]),
+                            mode="bm25",
+                            timeout=timeout,
+                            label=f"MCP_REUSABLE_RELATIONSHIP_{relationship_id}",
+                        )
+                        relationship_checks = 1
+                        print(
+                            f"MCP_REUSABLE_RELATIONSHIP_SEARCH=PASS RELATIONSHIP={relationship_id} "
+                            f"ID={row['knowledge_id']}"
+                        )
+                    else:
+                        print(
+                            "MCP_REUSABLE_RELATIONSHIP_SEARCH=PASS RELATIONSHIPS=0 "
+                            "SKIP=NO_EMBEDDED_RELATIONSHIP"
+                        )
 
                     # One representative of every Knowledge Kind must be usable through
                     # all three existing retrieval modes, not BM25 alone.
@@ -218,6 +304,28 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                     total_entities = int(statistics.get("total_entities", 0) or 0)
                     if total_entities <= 0:
                         raise RuntimeError(f"MCP_REUSABLE_KG_EMPTY entities={total_entities}")
+
+                    relationship_stats = (
+                        statistics.get("relationships")
+                        if isinstance(statistics.get("relationships"), dict)
+                        else {}
+                    )
+                    normalized_relationship_stats = {
+                        str(key).lower(): int(value or 0)
+                        for key, value in relationship_stats.items()
+                    }
+                    if cross_unit_relationship_probe:
+                        links_to = normalized_relationship_stats.get("links_to", 0)
+                        if links_to <= 0:
+                            raise RuntimeError(
+                                "MCP_REUSABLE_KG_RELATION_LINKS_MISSING="
+                                f"{normalized_relationship_stats}"
+                            )
+                        print(f"MCP_REUSABLE_KG_RELATION_LINKS=PASS LINKS_TO={links_to}")
+                    else:
+                        print(
+                            "MCP_REUSABLE_KG_RELATION_LINKS=PASS SKIP=NO_CROSS_UNIT_RELATIONSHIP"
+                        )
                     print(f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities}")
 
                     kg_query = await wait(
@@ -258,7 +366,8 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
     print(
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
         f"KNOWLEDGE_KINDS={len(kind_first)} BM25_NATURAL={natural} VECTOR={vector} "
-        f"HYBRID={hybrid} KG=PASS"
+        f"HYBRID={hybrid} CASE_SEARCH={case_checks} RELATIONSHIP_SEARCH={relationship_checks} "
+        "KG=PASS"
     )
 
 
