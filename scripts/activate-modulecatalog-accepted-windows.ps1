@@ -10,10 +10,11 @@ $Repo = Join-Path $Root 'repo'
 $RuntimePython = Join-Path $Root 'runtime\mcp-vector-search\Scripts\python.exe'
 $Mvs = Join-Path $Root 'runtime\mcp-vector-search\Scripts\mcp-vector-search.exe'
 $SnapshotBuilder = Join-Path $Repo 'scripts\replace_modulecatalog_reusable_snapshot.py'
+$CorpusRenderer = Join-Path $Repo 'scripts\render_knowledge_corpus.py'
+$RuntimeLinkPrefixer = Join-Path $Repo 'scripts\prefix_modulecatalog_runtime_links.py'
 $SafetyPatch = Join-Path $Repo 'scripts\patch-mvs-windows-trial-safety.ps1'
 $RecoveryScript = Join-Path $Repo 'scripts\recover-modulecatalog-activation-windows.ps1'
 $HistoryProbe = Join-Path $Repo 'tests\mcp_knowledge_client_e2e.py'
-$SkillProbe = Join-Path $Repo 'tests\mcp_verified_skill_trial_e2e.py'
 $ReusableProbe = Join-Path $Repo 'tests\mcp_reusable_asset_e2e.py'
 
 $AcceptedState = Join-Path $AcceptedRoot 'state.json'
@@ -27,12 +28,12 @@ $DeliveryManifest = Join-Path $AcceptedRoot 'delivery-manifest.json'
 
 $FormalJsonl = Join-Path $Root 'data\knowledge-records\formal-kb.jsonl'
 $NextFormal = Join-Path $Root 'data\knowledge-records\formal-kb.reusable-next.jsonl'
+$BaseFormal = Join-Path $Root 'data\knowledge-records\formal-kb.reusable-base-next.jsonl'
 $CurrentSearch = Join-Path $Root 'data\knowledge-search'
 $CurrentRecords = Join-Path $CurrentSearch 'records'
 $StagingSearch = Join-Path $Root 'data\knowledge-search.reusable-staging'
 $StagingRecords = Join-Path $StagingSearch 'records'
 $AcceptedSources = Join-Path $Root 'data\knowledge-sources\accepted'
-$OldSkillRecords = Join-Path $AcceptedSources 'debugai-code-repair-verification-skill-pack\knowledge-records.jsonl'
 $CurrentReusableSnapshot = Join-Path $AcceptedSources 'modulecatalog-reusable-current'
 $StagingReusableSnapshot = Join-Path $AcceptedSources 'modulecatalog-reusable-staging'
 $ActivationMarker = Join-Path $Root 'data\knowledge-records\modulecatalog-reusable-active.json'
@@ -40,7 +41,7 @@ $ActivationJournal = Join-Path $Root 'data\knowledge-intake\modulecatalog\activa
 $ReusableCorpusPrefix = 'accepted-modulecatalog-reusable-'
 $ModuleCatalogRepository = 'seigo-gace/modular-catalog'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewRelationships,$NewCases,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$CorpusRenderer,$RuntimeLinkPrefixer,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewRelationships,$NewCases,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -138,31 +139,50 @@ Write-Host "GACE_DELIVERY_ACCEPTANCE_AUTHORITY=PASS COMMIT=$CatalogCommit ASSETS
 
 $FormalRows = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
 $CurrentFormalCount = $FormalRows.Count
-$ExistingReusableCount = @($FormalRows | Where-Object { [string]$_.type -eq 'reusable_asset' -and [string]$_.repository -eq $ModuleCatalogRepository }).Count
-$BaseCount = $CurrentFormalCount - $ExistingReusableCount
 $CurrentCorpusCount = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File).Count
-if ($BaseCount -lt 1) { throw 'BASE_FORMAL_RECORD_COUNT_ZERO' }
+if ($CurrentFormalCount -lt 1) { throw 'CURRENT_FORMAL_RECORD_COUNT_ZERO' }
 if ($CurrentCorpusCount -ne $CurrentFormalCount) { throw "CURRENT_FORMAL_CORPUS_COUNT_MISMATCH records=$CurrentFormalCount corpus=$CurrentCorpusCount" }
-$ExpectedTotal = $BaseCount + $ExpectedRecordCount
 
 Write-Host '=== BUILD ACTIVE SNAPSHOT CANDIDATE ==='
-Remove-Item $NextFormal -Force -ErrorAction SilentlyContinue
-& $RuntimePython -B $SnapshotBuilder --current $FormalJsonl --replacement $NewRecords --output $NextFormal --expected-replacement-count $ExpectedRecordCount
+Remove-Item $NextFormal,$BaseFormal -Force -ErrorAction SilentlyContinue
+& $RuntimePython -B $SnapshotBuilder `
+    --current $FormalJsonl `
+    --replacement $NewRecords `
+    --output $NextFormal `
+    --base-output $BaseFormal `
+    --expected-replacement-count $ExpectedRecordCount
 if ($LASTEXITCODE -ne 0) { throw "REUSABLE_SNAPSHOT_BUILD_FAILED=$LASTEXITCODE" }
+$BaseCount = @(Get-Content $BaseFormal | Where-Object { $_.Trim() }).Count
+if ($BaseCount -lt 1) { throw 'BASE_FORMAL_RECORD_COUNT_ZERO' }
+$ExpectedTotal = $BaseCount + $ExpectedRecordCount
 $NextCount = @(Get-Content $NextFormal | Where-Object { $_.Trim() }).Count
 if ($NextCount -ne $ExpectedTotal) { throw "NEXT_FORMAL_COUNT_MISMATCH expected=$ExpectedTotal actual=$NextCount" }
+Write-Host "GACE_MODULECATALOG_BASE_REBUILD=PASS CURRENT=$CurrentFormalCount BASE=$BaseCount REPLACEMENT=$ExpectedRecordCount TOTAL=$ExpectedTotal"
 
 Write-Host '=== BUILD STAGING SEARCH RUNTIME ==='
 if (Test-Path $StagingSearch) { Remove-Item $StagingSearch -Recurse -Force }
 New-Item -ItemType Directory -Path $StagingSearch -Force | Out-Null
 $init = Invoke-MvsCapture -Arguments @('init','--force','--extensions','.md','--no-auto-index','--no-mcp','--no-auto-indexing') -TimeoutSeconds 180
 if ($init.ExitCode -ne 0) { throw "STAGING_MVS_INIT_FAILED=$($init.ExitCode)" }
-New-Item -ItemType Directory -Path $StagingRecords -Force | Out-Null
-$BaseCorpusFiles = @(Get-ChildItem $CurrentRecords -Filter '*.md' -File | Where-Object { -not $_.Name.StartsWith($ReusableCorpusPrefix) })
-if ($BaseCorpusFiles.Count -ne $BaseCount) { throw "BASE_CORPUS_COUNT_MISMATCH expected=$BaseCount actual=$($BaseCorpusFiles.Count)" }
-foreach ($file in $BaseCorpusFiles) { Copy-Item $file.FullName (Join-Path $StagingRecords $file.Name) -Force }
+
+& $RuntimePython -B $CorpusRenderer --input $BaseFormal --output-dir $StagingRecords
+if ($LASTEXITCODE -ne 0) { throw "BASE_CORPUS_RENDER_FAILED=$LASTEXITCODE" }
+$RenderedBaseCount = @(Get-ChildItem $StagingRecords -Filter '*.md' -File).Count
+if ($RenderedBaseCount -ne $BaseCount) { throw "BASE_CORPUS_COUNT_MISMATCH expected=$BaseCount actual=$RenderedBaseCount" }
+Remove-Item $BaseFormal -Force -ErrorAction SilentlyContinue
+
 $prefix = "$ReusableCorpusPrefix$($CatalogCommit.Substring(0,12))-"
-foreach ($file in Get-ChildItem $NewCorpus -Filter '*.md' -File) { Copy-Item $file.FullName (Join-Path $StagingRecords ($prefix + $file.Name)) -Force }
+$StagingReusableCorpus = Join-Path $StagingSearch 'modulecatalog-runtime-source'
+if (Test-Path $StagingReusableCorpus) { Remove-Item $StagingReusableCorpus -Recurse -Force }
+New-Item -ItemType Directory -Path $StagingReusableCorpus -Force | Out-Null
+Copy-Item (Join-Path $NewCorpus '*.md') $StagingReusableCorpus -Force
+& $RuntimePython -B $RuntimeLinkPrefixer --corpus $StagingReusableCorpus --prefix $prefix
+if ($LASTEXITCODE -ne 0) { throw "RUNTIME_LINK_PREFIX_FAILED=$LASTEXITCODE" }
+foreach ($file in Get-ChildItem $StagingReusableCorpus -Filter '*.md' -File) {
+    Copy-Item $file.FullName (Join-Path $StagingRecords ($prefix + $file.Name)) -Force
+}
+Remove-Item $StagingReusableCorpus -Recurse -Force
+
 $StagingCorpusCount = @(Get-ChildItem $StagingRecords -Filter '*.md' -File).Count
 if ($StagingCorpusCount -ne $ExpectedTotal) { throw "STAGING_CORPUS_COUNT_MISMATCH expected=$ExpectedTotal actual=$StagingCorpusCount" }
 
@@ -186,14 +206,9 @@ finally { foreach ($name in $names) { Restore-EnvironmentValue -Name $name -Valu
 Write-Host '=== STAGING MCP OPERATIONAL GATES ==='
 & $RuntimePython -B $HistoryProbe --python $RuntimePython --project-root $StagingSearch --timeout 180
 if ($LASTEXITCODE -ne 0) { throw "STAGING_HISTORY_MCP_FAILED=$LASTEXITCODE" }
-if (Test-Path $OldSkillRecords) {
-    $OldSkillCount = @(Get-Content $OldSkillRecords | Where-Object { $_.Trim() }).Count
-    & $RuntimePython -B $SkillProbe --python $RuntimePython --project-root $StagingSearch --records $OldSkillRecords --expected-count $OldSkillCount --timeout 180
-    if ($LASTEXITCODE -ne 0) { throw "STAGING_EXISTING_SKILL_MCP_FAILED=$LASTEXITCODE" }
-}
 & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $StagingSearch --metadata $NewMetadata --expected-count $ExpectedRecordCount --timeout 180
 if ($LASTEXITCODE -ne 0) { throw "STAGING_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
-Write-Host "GACE_STAGING_RUNTIME=PASS TOTAL=$ExpectedTotal REUSABLE=$ExpectedRecordCount"
+Write-Host "GACE_STAGING_RUNTIME=PASS TOTAL=$ExpectedTotal REUSABLE=$ExpectedRecordCount LEGACY_MODULECATALOG_ASSETS=RETIRED"
 
 Write-Host '=== PREPARE STRUCTURED CURRENT SNAPSHOT ==='
 if (Test-Path $StagingReusableSnapshot) { Remove-Item $StagingReusableSnapshot -Recurse -Force }
@@ -325,7 +340,7 @@ catch {
     throw $failure
 }
 
-Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
+Remove-Item $BackupActivationMarker,$BackupReceipt,$BaseFormal -Force -ErrorAction SilentlyContinue
 Remove-Item $ActivationJournal -Force -ErrorAction SilentlyContinue
 Write-Host "GACE_MODULECATALOG_RUNTIME_ACTIVATION=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount REUSABLE=$ExpectedRecordCount RELATIONSHIPS=$ExpectedRelationshipCount CASES=$ExpectedCaseCount TOTAL=$ExpectedTotal"
 Write-Host "GACE_MODULECATALOG_POST_CUTOVER_MCP=PASS"
