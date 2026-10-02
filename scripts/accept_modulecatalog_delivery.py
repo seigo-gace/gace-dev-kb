@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ from import_modulecatalog_reusable_export import FORMAT, CATALOG_REPOSITORY, imp
 
 PROJECTION_SCHEMA_VERSION = 2
 RUNTIME_ENRICHMENT = "mvs-4.1.14-frontmatter-v1"
+GIT_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+SAFE_ASSET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 
 
 def sha256_file(path: Path) -> str:
@@ -59,7 +62,7 @@ def derive_counts(manifest: dict[str, Any]) -> tuple[str, int, int, int, int]:
     if str(catalog.get("repository") or "") != CATALOG_REPOSITORY:
         raise RuntimeError("DELIVERY_CATALOG_REPOSITORY_MISMATCH")
     commit = str(catalog.get("commit") or "")
-    if len(commit) != 40:
+    if not GIT_COMMIT_RE.fullmatch(commit):
         raise RuntimeError(f"DELIVERY_CATALOG_COMMIT_INVALID={commit}")
     assets = manifest.get("assets")
     if not isinstance(assets, list) or not assets:
@@ -69,10 +72,18 @@ def derive_counts(manifest: dict[str, Any]) -> tuple[str, int, int, int, int]:
         raise RuntimeError(
             f"DELIVERY_ASSET_COUNT_MISMATCH declared={asset_count} actual={len(assets)}"
         )
+
+    asset_ids: set[str] = set()
     record_count = relationship_count = case_count = 0
     for item in assets:
         if not isinstance(item, dict):
             raise RuntimeError("DELIVERY_ASSET_ENTRY_INVALID")
+        asset_id = str(item.get("id") or "")
+        if not SAFE_ASSET_ID_RE.fullmatch(asset_id):
+            raise RuntimeError(f"DELIVERY_ASSET_ID_UNSAFE={asset_id}")
+        if asset_id in asset_ids:
+            raise RuntimeError(f"DELIVERY_ASSET_ID_DUPLICATE={asset_id}")
+        asset_ids.add(asset_id)
         record_count += int(item.get("knowledgeUnits", -1))
         relationship_count += int(item.get("relationships", -1))
         case_count += int(item.get("cases", -1))
@@ -302,9 +313,6 @@ def accept_delivery(delivery_root: Path, accepted_root: Path, receipt_path: Path
             if not (accepted_root / rel).is_file():
                 raise RuntimeError(f"ACCEPTED_PROJECTION_FILE_MISSING={accepted_root / rel}")
 
-        # Critical replay rule: a matching top-level manifest and prior ACTIVE
-        # receipt do not prove the newly transported bundle is intact. Re-run the
-        # complete producer-manifest/hash/provenance/import path on every replay.
         validate_replay_against_state(
             delivery_root,
             manifest,
