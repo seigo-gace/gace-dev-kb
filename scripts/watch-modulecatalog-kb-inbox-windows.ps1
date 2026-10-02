@@ -2,6 +2,7 @@ param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
     [ValidateRange(1,3600)][int]$PollSeconds = 10,
+    [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
     [ValidateRange(1024,1073741824)][long]$MaxLogBytes = 5242880,
     [ValidateRange(1,20)][int]$MaxLogFiles = 5,
@@ -76,8 +77,8 @@ try {
         finally { $stream.Dispose() }
     }
 
-    Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds HeartbeatSeconds=$HeartbeatSeconds Once=$Once Host=$PowerShellHost"
-    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds ONCE=$Once HOST=$PowerShellHost"
+    Write-ServiceEvent -Status 'STARTED' -Message "Root=$Root PollSeconds=$PollSeconds RetryBackoffSeconds=$RetryBackoffSeconds HeartbeatSeconds=$HeartbeatSeconds Once=$Once Host=$PowerShellHost"
+    Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=STARTED ROOT=$Root POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds ONCE=$Once HOST=$PowerShellHost"
 
     $LastPassLogUtc = [DateTime]::MinValue
     while ($true) {
@@ -87,6 +88,7 @@ try {
             break
         }
 
+        $nextSleepSeconds = $PollSeconds
         try {
             & $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $Processor -Root $Root -Python $Python
             if ($LASTEXITCODE -ne 0) { throw "MODULECATALOG_INBOX_PROCESSOR_FAILED=$LASTEXITCODE" }
@@ -102,6 +104,8 @@ try {
             Write-ServiceEvent -Status 'POLL_FAILED' -Message $message
             Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=POLL_FAILED ERROR=$message"
             if ($Once) { throw }
+            $nextSleepSeconds = [Math]::Max($PollSeconds,$RetryBackoffSeconds)
+            Write-Host "GACE_MODULECATALOG_RECEIVER_SERVICE=BACKOFF SECONDS=$nextSleepSeconds"
         }
 
         if ($Once) {
@@ -110,7 +114,7 @@ try {
             break
         }
 
-        Start-Sleep -Seconds $PollSeconds
+        Start-Sleep -Seconds $nextSleepSeconds
     }
 }
 finally {
