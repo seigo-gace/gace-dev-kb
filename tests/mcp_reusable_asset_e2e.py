@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -44,6 +45,12 @@ def load(path: Path):
     return rows
 
 
+def safe_tag(value):
+    text = str(value or "unknown").strip().lower()
+    text = re.sub(r"[^0-9a-z._-]+", "-", text).strip("-")
+    return text or "unknown"
+
+
 def natural_query(row):
     discovery = row.get("discovery") if isinstance(row.get("discovery"), dict) else {}
     terms = []
@@ -77,28 +84,15 @@ def first_embedded_probe(rows, collection_key, id_key):
     return None
 
 
-def first_cross_unit_relationship_probe(rows):
-    known_units = {str(row.get("knowledge_id") or "") for row in rows}
-    known_units.discard("")
+def first_dependency_probe(rows):
     for row in rows:
-        current = str(row.get("knowledge_id") or "")
-        values = row.get("relationships")
-        if not isinstance(values, list):
+        if str(row.get("knowledge_kind") or "") != "discovery":
             continue
-        for value in values:
-            if not isinstance(value, dict):
-                continue
-            source = str(value.get("from") or "")
-            target = str(value.get("to") or "")
-            relation_id = str(value.get("relationship_id") or "")
-            if (
-                relation_id
-                and source in known_units
-                and target in known_units
-                and source != target
-                and current in {source, target}
-            ):
-                return row, value, relation_id
+        composition = row.get("composition") if isinstance(row.get("composition"), dict) else {}
+        for dependency in composition.get("depends_on") or []:
+            value = str(dependency or "").strip()
+            if value:
+                return row, value
     return None
 
 
@@ -144,6 +138,27 @@ async def search_and_require(
     return text
 
 
+async def kg_tag_require(session, *, tag: str, timeout: int, label: str):
+    result = await wait(
+        session.call_tool(
+            "kg_query",
+            arguments={"entity": f"tag:{tag}", "limit": 100},
+        ),
+        timeout,
+        label,
+    )
+    if getattr(result, "isError", False):
+        raise RuntimeError(f"{label}_TOOL_ERROR={text_from_result(result)}")
+    payload = json_from_result(result, label)
+    if str(payload.get("status") or "").lower() not in {"success", "ok"}:
+        raise RuntimeError(f"{label}_STATUS_INVALID={payload}")
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        raise RuntimeError(f"{label}_RESULTS_EMPTY tag={tag}")
+    print(f"{label}=PASS TAG={tag} RESULTS={len(results)}")
+    return results
+
+
 async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: int):
     rows = load(metadata)
     if len(rows) != expected:
@@ -157,7 +172,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
 
     case_probe = first_embedded_probe(rows, "cases", "case_id")
     relationship_probe = first_embedded_probe(rows, "relationships", "relationship_id")
-    cross_unit_relationship_probe = first_cross_unit_relationship_probe(rows)
+    dependency_probe = first_dependency_probe(rows)
 
     env = dict(os.environ)
     env["MCP_ENABLE_FILE_WATCHING"] = "false"
@@ -286,8 +301,8 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         )
 
                     # MVS 4.1.14 kg_stats exposes total_entities + relationships but not
-                    # doc-section count. Document presence is therefore proven by the
-                    # following tag query, not by an unsupported stats field.
+                    # doc-section count. Document presence and reusable semantics are
+                    # therefore proven through kg_query tag lookups.
                     kg_stats = await wait(
                         session.call_tool("kg_stats", arguments={}),
                         timeout,
@@ -304,51 +319,46 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                     total_entities = int(statistics.get("total_entities", 0) or 0)
                     if total_entities <= 0:
                         raise RuntimeError(f"MCP_REUSABLE_KG_EMPTY entities={total_entities}")
-
-                    relationship_stats = (
-                        statistics.get("relationships")
-                        if isinstance(statistics.get("relationships"), dict)
-                        else {}
-                    )
-                    normalized_relationship_stats = {
-                        str(key).lower(): int(value or 0)
-                        for key, value in relationship_stats.items()
-                    }
-                    if cross_unit_relationship_probe:
-                        links_to = normalized_relationship_stats.get("links_to", 0)
-                        if links_to <= 0:
-                            raise RuntimeError(
-                                "MCP_REUSABLE_KG_RELATION_LINKS_MISSING="
-                                f"{normalized_relationship_stats}"
-                            )
-                        print(f"MCP_REUSABLE_KG_RELATION_LINKS=PASS LINKS_TO={links_to}")
-                    else:
-                        print(
-                            "MCP_REUSABLE_KG_RELATION_LINKS=PASS SKIP=NO_CROSS_UNIT_RELATIONSHIP"
-                        )
                     print(f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities}")
 
-                    kg_query = await wait(
-                        session.call_tool(
-                            "kg_query",
-                            arguments={"entity": f"tag:{KG_RUNTIME_TAG}", "limit": 100},
-                        ),
-                        timeout,
-                        "MCP_REUSABLE_KG_TAG_QUERY",
+                    await kg_tag_require(
+                        session,
+                        tag=KG_RUNTIME_TAG,
+                        timeout=timeout,
+                        label="MCP_REUSABLE_KG_TAG_QUERY",
                     )
-                    if getattr(kg_query, "isError", False):
-                        raise RuntimeError(
-                            "MCP_REUSABLE_KG_TAG_TOOL_ERROR=" + text_from_result(kg_query)
+
+                    kg_relation_checks = 0
+                    if relationship_probe:
+                        _row, relationship, _relationship_id = relationship_probe
+                        relation = str(relationship.get("relation") or "").strip()
+                        if relation:
+                            await kg_tag_require(
+                                session,
+                                tag=f"relation-{safe_tag(relation)}",
+                                timeout=timeout,
+                                label="MCP_REUSABLE_KG_RELATION_TAG_QUERY",
+                            )
+                            kg_relation_checks = 1
+                    if not kg_relation_checks:
+                        print(
+                            "MCP_REUSABLE_KG_RELATION_TAG_QUERY=PASS SKIP=NO_RELATION_SEMANTIC"
                         )
-                    kg_payload = json_from_result(kg_query, "MCP_REUSABLE_KG_TAG_QUERY")
-                    if str(kg_payload.get("status") or "").lower() not in {"success", "ok"}:
-                        raise RuntimeError(f"MCP_REUSABLE_KG_TAG_STATUS_INVALID={kg_payload}")
-                    results = kg_payload.get("results")
-                    if not isinstance(results, list) or not results:
-                        raise RuntimeError("MCP_REUSABLE_KG_TAG_RESULTS_EMPTY")
-                    print(
-                        f"MCP_REUSABLE_KG_TAG_QUERY=PASS TAG={KG_RUNTIME_TAG} RESULTS={len(results)}"
-                    )
+
+                    kg_dependency_checks = 0
+                    if dependency_probe:
+                        _row, dependency = dependency_probe
+                        await kg_tag_require(
+                            session,
+                            tag=f"depends-on-{safe_tag(dependency)}",
+                            timeout=timeout,
+                            label="MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY",
+                        )
+                        kg_dependency_checks = 1
+                    if not kg_dependency_checks:
+                        print(
+                            "MCP_REUSABLE_KG_DEPENDENCY_TAG_QUERY=PASS SKIP=NO_CATALOG_DEPENDENCY"
+                        )
 
             errlog.flush()
             errlog.seek(0)
@@ -367,7 +377,7 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
         f"GACE_REUSABLE_ASSET_MCP_E2E=PASS RECORDS={len(rows)} ASSETS={len(asset_ids)} "
         f"KNOWLEDGE_KINDS={len(kind_first)} BM25_NATURAL={natural} VECTOR={vector} "
         f"HYBRID={hybrid} CASE_SEARCH={case_checks} RELATIONSHIP_SEARCH={relationship_checks} "
-        "KG=PASS"
+        f"KG_RELATION={kg_relation_checks} KG_DEPENDENCY={kg_dependency_checks} KG=PASS"
     )
 
 
