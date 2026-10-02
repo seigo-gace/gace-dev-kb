@@ -42,7 +42,8 @@ try {
         -Python $Python `
         -PollSeconds 1 `
         -RetryBackoffSeconds 2 `
-        -HeartbeatSeconds 60
+        -HeartbeatSeconds 60 `
+        -RuntimeHealthSeconds 0
     if ($LASTEXITCODE -ne 0) { throw "RECEIVER_BACKOFF_RUN_FAILED=$LASTEXITCODE" }
 
     $ticks = @(Get-Content $Ticks | Where-Object { $_.Trim() } | ForEach-Object { [int64]$_ })
