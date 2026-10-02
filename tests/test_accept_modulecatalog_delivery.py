@@ -46,17 +46,40 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
             self.fixture.export_root, self.accepted, self.receipt
         )
         self.assertEqual(receipt["status"], "ACCEPTED")
+        self.assertEqual(receipt["projectionSchemaVersion"], 2)
         self.assertEqual(receipt["assetCount"], 1)
         self.assertEqual(receipt["knowledgeUnitCount"], 1)
         state = json.loads((self.accepted / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["catalogCommit"], self.fixture.commit)
+        self.assertEqual(state["projectionSchemaVersion"], 2)
         self.assertEqual(state["corpusCount"], 1)
         self.assertEqual(
             state["corpusRuntimeEnrichment"], "mvs-4.1.14-frontmatter-v1"
         )
-        self.assertTrue((self.accepted / "projection" / "knowledge-records.jsonl").is_file())
-        self.assertTrue((self.accepted / "projection" / "knowledge-metadata.jsonl").is_file())
-        corpus_files = list((self.accepted / "projection" / "records").glob("*.md"))
+        projection = self.accepted / "projection"
+        self.assertTrue((projection / "knowledge-records.jsonl").is_file())
+        self.assertTrue((projection / "knowledge-metadata.jsonl").is_file())
+        self.assertTrue((projection / "relationships.jsonl").is_file())
+        self.assertTrue((projection / "cases.jsonl").is_file())
+        self.assertEqual(
+            accept_module.sha256_file(projection / "relationships.jsonl"),
+            state["relationshipsSha256"],
+        )
+        self.assertEqual(
+            accept_module.sha256_file(projection / "cases.jsonl"),
+            state["casesSha256"],
+        )
+        self.assertEqual(receipt["relationshipsSha256"], state["relationshipsSha256"])
+        self.assertEqual(receipt["casesSha256"], state["casesSha256"])
+        self.assertEqual(
+            len([line for line in (projection / "relationships.jsonl").read_text().splitlines() if line.strip()]),
+            state["relationshipCount"],
+        )
+        self.assertEqual(
+            len([line for line in (projection / "cases.jsonl").read_text().splitlines() if line.strip()]),
+            state["caseCount"],
+        )
+        corpus_files = list((projection / "records").glob("*.md"))
         self.assertEqual(len(corpus_files), 1)
         corpus_text = corpus_files[0].read_text(encoding="utf-8")
         self.assertTrue(corpus_text.startswith("---\n"))
@@ -68,6 +91,8 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         first = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         second = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         self.assertEqual(first["deliveryManifestSha256"], second["deliveryManifestSha256"])
+        self.assertEqual(first["relationshipsSha256"], second["relationshipsSha256"])
+        self.assertEqual(first["casesSha256"], second["casesSha256"])
         corpus_files = list((self.accepted / "projection" / "records").glob("*.md"))
         self.assertEqual(len(corpus_files), 1)
         self.assertEqual(corpus_files[0].read_text(encoding="utf-8").count("---\n"), 2)
