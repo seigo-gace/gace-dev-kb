@@ -45,6 +45,26 @@ function Restore-EnvironmentValue {
     param([string]$Name,[AllowNull()][string]$Value)
     if ($null -eq $Value) { Remove-Item "Env:$Name" -ErrorAction SilentlyContinue } else { Set-Item "Env:$Name" $Value }
 }
+function Write-JsonAtomic {
+    param([object]$Value,[string]$Path)
+    $directory = Split-Path $Path
+    if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    $temp = "$Path.tmp.$PID.$([Guid]::NewGuid().ToString('N'))"
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    try {
+        $json = $Value | ConvertTo-Json -Depth 16
+        [System.IO.File]::WriteAllText($temp, $json + [Environment]::NewLine, $encoding)
+        if (Test-Path $Path) {
+            [System.IO.File]::Replace($temp, $Path, $null)
+        }
+        else {
+            [System.IO.File]::Move($temp, $Path)
+        }
+    }
+    finally {
+        Remove-Item $temp -Force -ErrorAction SilentlyContinue
+    }
+}
 function Invoke-MvsCapture {
     param([string[]]$Arguments,[int]$TimeoutSeconds = 2400,[string]$WorkingDirectory = $StagingSearch)
     $tag = [Guid]::NewGuid().ToString('N')
@@ -171,7 +191,12 @@ $timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 $BackupSearch = Join-Path $Root "data\knowledge-search.previous-$timestamp"
 $BackupFormal = Join-Path $Root "data\knowledge-records\formal-kb.previous-$timestamp.jsonl"
 $BackupReusable = Join-Path $AcceptedSources "modulecatalog-reusable.previous-$timestamp"
+$BackupActivationMarker = "$ActivationMarker.rollback-$timestamp"
+$BackupReceipt = "$ReceiptPath.rollback-$timestamp"
+$HadActivationMarker = Test-Path $ActivationMarker
 Copy-Item $FormalJsonl $BackupFormal -Force
+Copy-Item $ReceiptPath $BackupReceipt -Force
+if ($HadActivationMarker) { Copy-Item $ActivationMarker $BackupActivationMarker -Force }
 $hadCurrentReusable = Test-Path $CurrentReusableSnapshot
 $searchMoved = $false; $reusableMoved = $false
 try {
@@ -189,6 +214,35 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "POST_CUTOVER_HISTORY_MCP_FAILED=$LASTEXITCODE" }
     & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $CurrentSearch --metadata (Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl') --expected-count $ExpectedRecordCount --timeout 180
     if ($LASTEXITCODE -ne 0) { throw "POST_CUTOVER_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
+
+    $Active = [ordered]@{
+        schemaVersion = 1
+        status = 'ACTIVE'
+        catalogRepository = $ModuleCatalogRepository
+        catalogCommit = $CatalogCommit
+        assetCount = $ExpectedAssetCount
+        knowledgeUnitCount = $ExpectedRecordCount
+        relationshipCount = [int]$State.relationshipCount
+        caseCount = [int]$State.caseCount
+        corpusCount = $NewCorpusCount
+        totalFormalRecordCount = $ExpectedTotal
+        formalKbSha256 = Get-Sha256 $FormalJsonl
+        knowledgeRecordsSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-records.jsonl')
+        knowledgeMetadataSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl')
+        deliveryManifestSha256 = Get-Sha256 $DeliveryManifest
+        acceptedRoot = $AcceptedRoot
+        activatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        backupFormal = $BackupFormal
+        backupSearch = $BackupSearch
+    }
+    Write-JsonAtomic -Value $Active -Path (Join-Path $CurrentReusableSnapshot 'runtime-state.json')
+    Write-JsonAtomic -Value $Active -Path $ActivationMarker
+    Write-JsonAtomic -Value $Active -Path $ReceiptPath
+
+    $ReceiptCheck = Get-Content $ReceiptPath -Raw | ConvertFrom-Json
+    $MarkerCheck = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
+    if ([string]$ReceiptCheck.status -ne 'ACTIVE' -or [string]$ReceiptCheck.catalogCommit -ne $CatalogCommit) { throw 'ACTIVE_RECEIPT_WRITE_VERIFY_FAILED' }
+    if ([string]$MarkerCheck.status -ne 'ACTIVE' -or [string]$MarkerCheck.catalogCommit -ne $CatalogCommit) { throw 'ACTIVE_MARKER_WRITE_VERIFY_FAILED' }
 }
 catch {
     $failure = $_
@@ -197,18 +251,18 @@ catch {
     if (Test-Path $BackupFormal) { Copy-Item $BackupFormal $FormalJsonl -Force -ErrorAction SilentlyContinue }
     if (Test-Path $CurrentReusableSnapshot) { Remove-Item $CurrentReusableSnapshot -Recurse -Force -ErrorAction SilentlyContinue }
     if ($reusableMoved -and (Test-Path $BackupReusable)) { Move-Item $BackupReusable $CurrentReusableSnapshot -ErrorAction SilentlyContinue }
+    if ($HadActivationMarker -and (Test-Path $BackupActivationMarker)) {
+        Copy-Item $BackupActivationMarker $ActivationMarker -Force -ErrorAction SilentlyContinue
+    }
+    elseif (-not $HadActivationMarker) {
+        Remove-Item $ActivationMarker -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $BackupReceipt) { Copy-Item $BackupReceipt $ReceiptPath -Force -ErrorAction SilentlyContinue }
+    Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
     throw $failure
 }
 
-$Active = [ordered]@{
-    schemaVersion = 1; status = 'ACTIVE'; catalogRepository = $ModuleCatalogRepository; catalogCommit = $CatalogCommit
-    assetCount = $ExpectedAssetCount; knowledgeUnitCount = $ExpectedRecordCount; totalFormalRecordCount = $ExpectedTotal
-    formalKbSha256 = Get-Sha256 $FormalJsonl; knowledgeRecordsSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-records.jsonl')
-    knowledgeMetadataSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl'); deliveryManifestSha256 = Get-Sha256 $DeliveryManifest
-    activatedAtUtc = [DateTime]::UtcNow.ToString('o'); backupFormal = $BackupFormal; backupSearch = $BackupSearch
-}
-$Active | ConvertTo-Json -Depth 8 | Set-Content -Path $ActivationMarker -Encoding UTF8
-$Active | ConvertTo-Json -Depth 8 | Set-Content -Path $ReceiptPath -Encoding UTF8
+Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
 Write-Host "GACE_MODULECATALOG_RUNTIME_ACTIVATION=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount REUSABLE=$ExpectedRecordCount TOTAL=$ExpectedTotal"
 Write-Host "GACE_MODULECATALOG_POST_CUTOVER_MCP=PASS"
 Write-Host "RECEIPT=$ReceiptPath"
