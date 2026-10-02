@@ -8,7 +8,6 @@ $Ready = Join-Path $InboxBase 'ready'
 $Processing = Join-Path $InboxBase 'processing'
 $Processed = Join-Path $InboxBase 'processed'
 $Failed = Join-Path $InboxBase 'failed'
-$OriginalPath = $env:PATH
 
 function Write-Manifest {
     param([string]$Directory,[string]$Commit)
@@ -32,22 +31,6 @@ function Write-Manifest {
 try {
     New-Item -ItemType Directory -Path $RepoScripts,$Ready,$Processing,$Processed,$Failed -Force | Out-Null
 
-    # The production processor launches Windows PowerShell. GitHub's Linux runner
-    # has pwsh instead, so provide a test-only compatibility shim.
-    if (-not (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
-        $ShimDir = Join-Path $Root 'shim'
-        New-Item -ItemType Directory -Path $ShimDir -Force | Out-Null
-        $Shim = Join-Path $ShimDir 'powershell.exe'
-        $shimText = @'
-#!/usr/bin/env bash
-exec pwsh "$@"
-'@
-        [System.IO.File]::WriteAllText($Shim, $shimText, (New-Object System.Text.UTF8Encoding($false)))
-        & chmod +x $Shim
-        if ($LASTEXITCODE -ne 0) { throw "POWERSHELL_SHIM_CHMOD_FAILED=$LASTEXITCODE" }
-        $env:PATH = "$ShimDir$([System.IO.Path]::PathSeparator)$env:PATH"
-    }
-
     # Fixture receiver: successful deliveries emit ACTIVE; fail-* deliberately fail.
     $receiver = @'
 param(
@@ -56,6 +39,7 @@ param(
     [string]$DeliveryRoot
 )
 $ErrorActionPreference = 'Stop'
+Write-Host "FIXTURE_RECEIVER_START DELIVERY=$DeliveryRoot"
 if ((Split-Path $DeliveryRoot -Leaf) -like 'fail-*') {
     throw 'FIXTURE_RECEIVER_FAILURE'
 }
@@ -66,6 +50,7 @@ New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
 $receipt = [ordered]@{ status='ACTIVE'; catalogCommit=$commit; assetCount=1; knowledgeUnitCount=1 }
 $encoding = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $receiptRoot "$commit.json"), ($receipt | ConvertTo-Json) + [Environment]::NewLine, $encoding)
+Write-Host "FIXTURE_RECEIVER_PASS COMMIT=$commit"
 '@
     [System.IO.File]::WriteAllText(
         (Join-Path $RepoScripts 'receive-modulecatalog-kbdata-windows.ps1'),
@@ -107,8 +92,17 @@ $encoding = New-Object System.Text.UTF8Encoding($false)
     if (-not (Test-Path (Join-Path $ResumeProcessed 'kb-active-receipt.json'))) {
         throw 'RESUMED_ACTIVE_RECEIPT_ARCHIVE_MISSING'
     }
+    $successStdout = @(Get-ChildItem $ResumeProcessed -File -Filter 'kb-receiver-*.stdout.log')
+    $successStderr = @(Get-ChildItem $ResumeProcessed -File -Filter 'kb-receiver-*.stderr.log')
+    if ($successStdout.Count -ne 1 -or $successStderr.Count -ne 1) {
+        throw "RESUMED_RECEIVER_LOG_COUNT_INVALID stdout=$($successStdout.Count) stderr=$($successStderr.Count)"
+    }
+    if ((Get-Content $successStdout[0].FullName -Raw) -notmatch 'FIXTURE_RECEIVER_PASS') {
+        throw 'RESUMED_RECEIVER_STDOUT_EVIDENCE_MISSING'
+    }
 
-    # A failed resumed delivery is preserved with machine-readable failure evidence.
+    # A failed resumed delivery is preserved with machine-readable failure evidence
+    # and the exact child-process stdout/stderr from the failed receiver attempt.
     $FailCommit = 'd' * 40
     $FailProcessing = Join-Path $Processing 'fail-resume'
     Write-Manifest -Directory $FailProcessing -Commit $FailCommit
@@ -117,17 +111,27 @@ $encoding = New-Object System.Text.UTF8Encoding($false)
     if ($failureCode -eq 0) { throw 'FAILED_RESUME_DID_NOT_FAIL' }
     $FailedArchives = @(Get-ChildItem $Failed -Directory -Filter 'fail-resume-*')
     if ($FailedArchives.Count -ne 1) { throw "FAILED_ARCHIVE_COUNT_INVALID=$($FailedArchives.Count)" }
-    if (-not (Test-Path (Join-Path $FailedArchives[0].FullName 'kb-failure.json'))) {
-        throw 'FAILED_ARCHIVE_EVIDENCE_MISSING'
+    $failureJsonPath = Join-Path $FailedArchives[0].FullName 'kb-failure.json'
+    if (-not (Test-Path $failureJsonPath)) { throw 'FAILED_ARCHIVE_EVIDENCE_MISSING' }
+    $failureData = Get-Content $failureJsonPath -Raw | ConvertFrom-Json
+    if (-not [string]$failureData.receiverStdoutLog -or -not [string]$failureData.receiverStderrLog) {
+        throw 'FAILED_RECEIVER_LOG_REFERENCE_MISSING'
+    }
+    $failedStdout = Join-Path $FailedArchives[0].FullName ([string]$failureData.receiverStdoutLog)
+    $failedStderr = Join-Path $FailedArchives[0].FullName ([string]$failureData.receiverStderrLog)
+    if (-not (Test-Path $failedStdout) -or -not (Test-Path $failedStderr)) {
+        throw 'FAILED_RECEIVER_LOG_FILE_MISSING'
+    }
+    if ((Get-Content $failedStderr -Raw) -notmatch 'FIXTURE_RECEIVER_FAILURE') {
+        throw 'FAILED_RECEIVER_STDERR_EVIDENCE_MISSING'
     }
 
     if (Test-Path (Join-Path $InboxBase 'processor.lock')) {
         throw 'PROCESSOR_LOCK_NOT_RELEASED'
     }
 
-    Write-Host 'GACE_MODULECATALOG_INBOX_LIFECYCLE=PASS'
+    Write-Host 'GACE_MODULECATALOG_INBOX_LIFECYCLE=PASS RECEIVER_DIAGNOSTICS=PASS'
 }
 finally {
-    $env:PATH = $OriginalPath
     Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
 }
