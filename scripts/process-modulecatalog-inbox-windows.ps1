@@ -104,7 +104,9 @@ try {
             $stderrTail = Read-LogTail -Path $receiverStderr
             $stdoutTail = Read-LogTail -Path $receiverStdout
             $combined = "$stderrTail`n$stdoutTail"
-            if ($combined -match 'MODULECATALOG_RECEIVER_BUSY|RUNTIME_RECEIVER_BUSY') { $retryable = $true }
+            if ($combined -match 'MODULECATALOG_RECEIVER_BUSY|RUNTIME_RECEIVER_BUSY|IDEMPOTENT_ACTIVE_RUNTIME_UNHEALTHY|FINAL_ACTIVE_RUNTIME_HEALTH_FAILED|RUNTIME_UNRESOLVED_ACTIVATION_JOURNAL') {
+                $retryable = $true
+            }
             throw ("MODULECATALOG_INBOX_DELIVERY_FAILED={0} EXIT={1} STDERR={2} STDOUT={3}" -f $processingPath,$exitCode,$stderrTail,$stdoutTail)
         }
 
@@ -118,9 +120,6 @@ try {
         if ([string]$receiptData.catalogCommit -ne $commit) { throw "ACTIVE_RECEIPT_COMMIT_MISMATCH=$($receiptData.catalogCommit)" }
         $activated = $true
 
-        # Receipt evidence must enter the claimed delivery before the directory is
-        # archived. A crash after this point leaves a resumable processing bundle,
-        # never a processed archive missing its ACTIVE authority evidence.
         Copy-Item $receipt (Join-Path $processingPath 'kb-active-receipt.json') -Force
         Remove-Item (Join-Path $processingPath 'kb-retryable.json'),(Join-Path $processingPath 'kb-archive-pending.json') -Force -ErrorAction SilentlyContinue
         Move-Item $processingPath $processedPath
@@ -138,7 +137,6 @@ try {
                 receiverStdoutLog = $receiverStdoutName
                 receiverStderrLog = $receiverStderrName
             }
-
             if ($activated) {
                 $record.status = 'ACTIVE_ARCHIVE_PENDING'
                 Write-JsonUtf8 -Value $record -Path (Join-Path $processingPath 'kb-archive-pending.json')
@@ -151,7 +149,6 @@ try {
                 Write-Host "GACE_MODULECATALOG_INBOX=RETRYABLE DELIVERY=$processingPath"
                 throw $failure
             }
-
             $record.status = 'FAILED'
             Write-JsonUtf8 -Value $record -Path (Join-Path $processingPath 'kb-failure.json')
             $failedPath = Unique-FailedPath -Name $deliveryName
