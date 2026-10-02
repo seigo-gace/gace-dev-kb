@@ -11,12 +11,35 @@ The operational KB path must not clone/fetch ModuleCatalog or regenerate produce
 Default Windows inbox:
 
 ```text
-F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\ready\<delivery-id>\
-  manifest.json
-  assets\...
+F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\
+├─ ready\<delivery-id>\
+│  ├─ manifest.json
+│  └─ assets\...
+├─ processing\
+├─ processed\
+└─ failed\
 ```
 
+The transport side must publish a complete delivery under `ready`. A directory without `manifest.json` is treated as incomplete/pending and is not consumed.
+
+The active KB is a **single-current-snapshot** runtime. The current producer manifest does not contain a monotonic sequence / predecessor authority, so the inbox processor refuses more than one complete ready delivery at once. This prevents an older valid Catalog snapshot from becoming current merely because of directory sort order. Transport should therefore expose exactly one current activation candidate in `ready` until an explicit ordering authority is added to the delivery contract.
+
+Before processing, the KB atomically claims the ready directory by moving it to `processing`. A successful ACTIVE delivery is moved to `processed`. A failed delivery is moved to `failed` with a timestamp suffix. No successful delivery is left in `ready` and repeatedly reactivated.
+
 The transport side may use another delivery directory when it explicitly invokes the receiver with `-DeliveryRoot`.
+
+## Receive serialization
+
+Only one receive/activation operation may change the KB runtime at a time.
+`receive-modulecatalog-kbdata-windows.ps1` holds an exclusive file lock under:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receive.lock
+```
+
+A concurrent receiver fails closed with `MODULECATALOG_RECEIVER_BUSY` instead of running two index/cutover operations against the same current KB.
+
+## Receipts
 
 KB receipts are written under:
 
@@ -31,11 +54,16 @@ ACCEPTED = transport payload passed admission and local projection was built.
 ACTIVE   = payload passed the existing KB runtime gates and is the current searchable snapshot.
 ```
 
+Re-delivery of the exact already-ACTIVE Catalog commit is idempotent and must not downgrade it back to ACCEPTED.
+
 ## Operational pipeline
 
 ```text
 transported delivery
+→ ready
+→ claim into processing
 → acceptance/integrity verification
+→ ACCEPTED receipt
 → local structured projection
 → active-snapshot replacement candidate
 → staging search corpus
@@ -46,9 +74,10 @@ transported delivery
 → backup-backed current cutover
 → post-cutover MCP verification from the actual current path
 → ACTIVE receipt
+→ archive delivery under processed
 ```
 
-A failure before cutover leaves the current KB unchanged. A failure after cutover begins triggers rollback to the prior formal records/search runtime/current reusable snapshot.
+A failure before cutover leaves the current KB unchanged. A failure after cutover begins triggers rollback to the prior formal records/search runtime/current reusable snapshot. The failed transported bundle is preserved under `failed` for diagnosis.
 
 ## Data retention
 
@@ -76,7 +105,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -DeliveryRoot '<transported-delivery-directory>'
 ```
 
-Process every ready delivery in the default inbox:
+Process the one complete current delivery in the default inbox:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -86,4 +115,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ## Completion definition
 
 A transported Catalog payload is not operational merely because it was copied or accepted.
-Completion requires an `ACTIVE` receipt after the existing KB runtime has indexed it and post-cutover MCP retrieval succeeds.
+Completion requires an `ACTIVE` receipt after the existing KB runtime has indexed it and post-cutover MCP retrieval succeeds. For inbox operation, the transported directory must also have moved from `processing` to `processed`.
