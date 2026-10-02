@@ -2,25 +2,49 @@
 
 ## Purpose
 
-G-ACE KB accepts and searches **reusable development assets**, not only Skills.
-ModuleCatalog is the canonical repository. G-ACE KB stores a searchable runtime projection that can be rebuilt from a pinned ModuleCatalog commit.
-
+G-ACE KB accepts and operates **reusable development assets**, not only Skills.
 Reusable value includes code, logic, architecture, design, contracts, capabilities, test cases, evidence, patterns, workflows, configuration, integrations, remediation knowledge, and future reusable asset kinds.
+
+The contract is operational, not archival: a delivery is complete only when its data is accepted, indexed by the existing KB runtime, searchable through MCP, activated as Current, and represented by matching ACTIVE authority.
 
 ## Producer / consumer boundary
 
-ModuleCatalog owns canonical asset creation, verification, provenance, integrity, and export.
-G-ACE KB owns admission, searchable projection, BM25 / Vector / Knowledge Graph indexing, MCP retrieval, and PC-side runtime use.
-
-The KB must never rewrite ModuleCatalog canonical data. Missing facts remain missing or unknown. Derived information remains visibly derived.
-
-## Actual ModuleCatalog export format
-
-The current producer contract is `gace.reusable-asset.v1`.
-A full export is generated outside the ModuleCatalog working tree and has this layout:
+ModuleCatalog owns:
 
 ```text
-<export-root>/
+asset creation
+verification
+canonical/derived boundary
+search-ready KBData generation
+export integrity
+transport to the KB receive boundary
+```
+
+G-ACE KB owns **receipt onward**:
+
+```text
+transport completeness preflight
+admission / cryptographic re-verification
+local runtime projection
+BM25 / Vector / Knowledge Graph indexing
+MCP retrieval verification
+single-Current snapshot replacement
+atomic cutover / rollback
+ACTIVE receipt + marker + runtime-state
+processed/failed/retryable lifecycle
+ongoing runtime health
+```
+
+The operational KB receive path does not clone/fetch ModuleCatalog and does not regenerate producer authority. Cross-repository producer execution in GitHub Actions is a compatibility test only.
+
+The KB never rewrites transported canonical data. Runtime-only tags, links, filename prefixes and search documents are derived local projections. Missing facts remain missing/unknown; derived information remains visibly derived.
+
+## Transport format
+
+The producer contract is `gace.reusable-asset.v1`:
+
+```text
+<delivery-root>/
 ├─ manifest.json
 └─ assets/
    ├─ <asset-id>/
@@ -32,9 +56,9 @@ A full export is generated outside the ModuleCatalog working tree and has this l
    └─ ...
 ```
 
-The top-level `manifest.json` identifies the exact catalog repository and commit and declares each exported Asset with its source `assetHash`, generated `bundleHash`, Knowledge Unit count, relationship count, and case count.
+The top-level manifest identifies the exact Catalog repository/commit and declares each Asset with its source Asset hash, bundle hash, Knowledge Unit count, relationship count and case count.
 
-Each per-Asset `manifest.json` uses SHA-256 and covers:
+Each per-Asset manifest uses SHA-256 and covers:
 
 ```text
 asset.json
@@ -43,18 +67,27 @@ relationships.jsonl
 cases.jsonl
 ```
 
-The KB importer verifies declared size/hash values, the recomputed bundle hash, source asset hash, catalog repository, catalog commit, asset id, and asset path before admission.
+## Transport completion versus admission
+
+Presence of the top-level `manifest.json` alone is not enough to claim a delivery.
+Before moving a directory from `ready` to `processing`, the KB checks that declared Asset directories/manifests and their listed files are present and have at least the declared byte size. A visibly partial copy stays pending.
+
+This is only a transport-completeness preflight. It does **not** replace admission. Once claimed, the authoritative importer rechecks exact size, SHA-256, bundle hash, source Asset hash, identity, provenance, cardinality and relationships. Oversized/corrupt/invalid data is therefore claimed and rejected rather than being mistaken for an in-progress transfer.
+
+The preflight never follows rooted or traversal (`..`) paths outside the delivered Asset directory.
+
+The transport side should ideally finish a bundle outside `ready` and atomically rename/move the completed directory into `ready`; the KB preflight remains a second line of defense against incomplete visibility.
 
 ## Asset and Knowledge Unit are different concepts
 
-A ModuleCatalog Asset is the canonical package.
+A ModuleCatalog Asset is the parent reusable package.
 A Knowledge Unit is an independently searchable/reusable projection from that Asset.
 
-One Asset may therefore produce many Knowledge Units:
+One Asset may produce many Knowledge Units:
 
 ```text
 Asset
-├─ overview/discovery
+├─ discovery / overview
 ├─ documentation
 ├─ design
 ├─ logic
@@ -64,12 +97,11 @@ Asset
 └─ test-case unit(s)
 ```
 
-Every Knowledge Unit keeps `parent_asset_id`, so any search result can return to the parent Asset and exact pinned ModuleCatalog commit.
+Every Knowledge Unit keeps `parent_asset_id`, so search results remain traceable to the parent Asset and exact Catalog commit.
 
-## asset.json
+## `asset.json`
 
-`asset.json` is the structured Reusable Asset Schema v1 projection.
-The KB requires these structured sections:
+The KB requires the structured Reusable Asset Schema v1 sections:
 
 ```text
 identity
@@ -86,144 +118,19 @@ integrity
 derivation
 ```
 
-### identity
+Important boundaries:
 
-Contains Asset identity such as:
+- `asset_kind` may remain `unknown`; the KB does not invent a stronger type.
+- classification fields remain semantically distinct rather than being collapsed into one tag list.
+- applicability/contract fields may remain empty or unknown when the producer lacks canonical evidence.
+- `verification.status` must be `verified` for admission; PASS scope is never widened beyond recorded evidence.
+- origin provenance and Catalog provenance remain separate facts.
+- lifecycle remains independent from verification.
+- canonical sources and derived fields remain distinguishable.
 
-```text
-asset_id
-name
-version
-asset_kind
-symbol
-```
+## `knowledge-units.jsonl`
 
-`asset_kind` may be `unknown` when ModuleCatalog has no canonical basis for a stronger classification. The KB does not invent a better value.
-
-### classification
-
-Searchable classification data:
-
-```text
-domains
-layers
-languages
-runtimes
-tags
-```
-
-These values remain separate semantic fields; they are not collapsed into one generic tag list.
-
-### discovery
-
-Used to discover what the parent Asset is for:
-
-```text
-summary
-purpose
-responsibility
-capabilities
-keywords
-semantic_terms
-```
-
-Canonical values are preserved. Deterministically derived keywords remain identifiable through derivation metadata.
-
-### applicability
-
-Used to decide whether an Asset should be used:
-
-```text
-use_when
-do_not_use_when
-preconditions
-required_context
-failure_conditions
-```
-
-The current producer deliberately leaves these empty when the current canonical Asset does not contain enough information. The KB must preserve that boundary rather than infer canonical facts.
-
-### contract
-
-Used to understand execution/reuse compatibility:
-
-```text
-status
-inputs
-outputs
-required_fields
-optional_fields
-error_behavior
-side_effects
-mutation_authority
-```
-
-Unknown or not-recorded values remain unknown/not recorded.
-
-### composition
-
-Used for combination and Knowledge Graph relations:
-
-```text
-depends_on
-requires
-recommended_before
-recommended_after
-complements
-alternative_to
-conflicts_with
-supersedes
-```
-
-### implementation
-
-Used to locate real reusable implementation:
-
-```text
-languages
-runtimes
-entrypoints
-source_files
-dependencies
-```
-
-### verification
-
-Admission requires:
-
-```text
-verification.status = verified
-```
-
-Normal/User evidence, verified timestamp, validation boundary and known-unverified scope are retained. The KB must never widen a PASS claim beyond the producer's evidence boundary.
-
-### provenance
-
-Both provenance layers are retained:
-
-```text
-origin.repository / origin.commit
-catalog.repository / catalog.commit / catalog.asset_path / catalog.asset_id
-```
-
-Origin and Catalog provenance are different facts and must not be collapsed.
-
-### lifecycle
-
-Lifecycle remains independent from verification status.
-It is searchable so retired/deprecated/superseded assets can be distinguished from current ones.
-
-### integrity
-
-The KB retains source Asset hash, meta hash, manifest algorithm/file data, plus generated bundle hash.
-
-### derivation
-
-Canonical sources and derived fields remain separate. Derived data never silently becomes canonical truth.
-
-## knowledge-units.jsonl
-
-The actual producer emits one object per independently searchable unit with:
+Each searchable unit contains at least:
 
 ```text
 schema_version
@@ -237,7 +144,7 @@ content_status
 derivation
 ```
 
-`knowledge_kind` is the main search-unit type, for example:
+`knowledge_kind` describes the searchable unit, for example:
 
 ```text
 discovery
@@ -250,21 +157,28 @@ code
 test_case
 ```
 
-This is intentionally distinct from the parent Asset's `asset_kind`.
-The KB indexes both.
+It is intentionally distinct from the parent Asset's `asset_kind`.
 
-## relationships.jsonl
+## `relationships.jsonl`
 
-Relationships are first-class reusable data.
-Current producer relations include Asset → Knowledge Unit `contains` edges and resolvable canonical `depends_on` edges.
+Relationships are first-class reusable data, not disposable export metadata.
+Current producer relations include Asset → Knowledge Unit `contains` edges and resolvable canonical dependency edges when present.
 
-The KB verifies that every relationship target resolves to a declared Asset or Knowledge Unit before admission.
-These relations are retained for current Markdown search and future stronger Knowledge Graph use.
+The KB verifies relationship IDs/endpoints and preserves the aggregated relationship sidecar through ACCEPTED and ACTIVE snapshots with independent SHA-256 and cardinality authority.
 
-## cases.jsonl
+For the existing MVS 4.1.14 Knowledge Graph runtime, the KB also creates **derived runtime projections**:
 
-Test data is both verification evidence and reusable knowledge.
-Current Case records preserve:
+```text
+relation-<relation-type> tags
+related: document links when endpoints resolve
+depends-on-<asset-id> tags
+```
+
+This does not replace the canonical relationship sidecar and does not invent absent producer relations.
+
+## `cases.jsonl`
+
+Test data is both evidence and reusable knowledge. Case data may include:
 
 ```text
 case_id
@@ -281,124 +195,267 @@ extraction_status
 derivation
 ```
 
-When the producer cannot deterministically extract scenario/input/actual, the values remain null and `source_test` plus real test content remain available. The KB must not invent them.
+Unknown scenario/input/actual values remain null when not deterministically available. Stable case IDs and real test content remain searchable. The structured case sidecar is retained through ACTIVE with hash/count authority.
 
-## KB search projection
+## KB projection schema v2
 
-For each imported Knowledge Unit, G-ACE generates:
-
-1. `knowledge-records.jsonl` — existing eight-field compatibility envelope.
-2. `knowledge-metadata.jsonl` — full reusable-asset search metadata, including parent Asset fields and Knowledge Unit content.
-3. `records/*.md` — deterministic rich search documents for BM25 / Vector / Knowledge Graph indexing.
-
-The eight-field envelope remains only a compatibility layer:
+For each accepted delivery, the KB creates a local projection:
 
 ```text
-type=reusable_asset
-repository=seigo-gace/modular-catalog
-commit=<pinned catalog commit>
-summary=<parent summary + unit title + knowledge kind>
-cause=""
-fix=""
-validation=<actual parent Asset verification boundary>
-source=modulecatalog:<repo>@<commit>#assets/<asset-id>::<knowledge-id>
+knowledge-records.jsonl
+knowledge-metadata.jsonl
+relationships.jsonl
+cases.jsonl
+records/*.md
 ```
 
-`cause` and `fix` stay empty unless the canonical source really represents a cause/fix event. They are never fabricated for generic reusable assets.
-
-The rich Markdown exposes searchable meaning including:
+The eight-field Knowledge Record is only the legacy compatibility envelope:
 
 ```text
-Knowledge ID
-Parent Asset ID / name / version / asset kind
-Knowledge Kind
-Data Class
-Lifecycle
-Verification
-Summary / Purpose / Responsibility
-Capabilities / Keywords / Semantic Terms
-Domains / Layers / Languages / Runtimes / Tags
-Applicability
-Contract
-Dependencies and composition relations
-Source paths
-Catalog commit
-Asset hash
-Knowledge content
-Matching reusable cases
-Relationships
-Provenance
+type
+repository
+commit
+summary
+cause
+fix
+validation
+source
 ```
+
+For generic reusable assets, `cause`/`fix` remain empty unless canonical source data really represents a cause/fix event.
+
+Full reusable meaning remains in structured metadata/sidecars and rich Markdown, including identity, kind, lifecycle, verification, purpose, capabilities, applicability, contract, composition, source paths, provenance, integrity, cases and relationships.
+
+## Runtime-only search enrichment
+
+The transported bundle is never modified. The local Markdown projection receives deterministic YAML frontmatter for the already-installed MVS runtime, including:
+
+```text
+gace-reusable-asset
+asset-<asset-id>
+knowledge-kind-<kind>
+lifecycle-<status>
+verification-<status>
+relation-<relation-type>
+depends-on-<asset-id>
+related: <resolved runtime document>
+```
+
+When activation prefixes Catalog runtime filenames to isolate them from the existing KB corpus, related-link targets are rewritten to the same prefix before indexing.
 
 ## Admission gates
 
-The full ModuleCatalog export is rejected if any of the following fail:
+A delivery fails closed when any required boundary fails, including:
 
 ```text
 top-level format/schema/repository/commit
-assetCount and actual assets/ directory set
+assetCount and actual Asset set
 unique Asset IDs
 per-Asset SHA-256 manifest
 per-Asset bundle hash
 source Asset hash
 required bundle files
-Asset schema sections
+Asset required sections
 verification.status=verified
 Catalog provenance / commit / asset path
 unique Knowledge IDs
 parent_asset_id integrity
-per-Asset Knowledge Unit / relationship / case counts
+Knowledge Unit / relationship / case counts
 relationship node resolution
-expected Asset count
-expected total Knowledge Unit count
+projection hashes/cardinality
 ```
 
-This is fail-closed. Partial admission is not silently accepted.
+A replay is not trusted merely because a receipt already exists. The payload is re-imported/revalidated and replay-derived hashes must match accepted authority.
 
-## Windows / PC isolated trial
+## Inbox and operational lifecycle
 
-Before formal KB promotion, the exact pinned ModuleCatalog commit must pass an isolated trial:
+Default receive boundary:
 
 ```text
-pinned ModuleCatalog checkout (core.autocrlf=false)
-→ run producer export API outside the catalog tree
-→ verify 80-Asset/full export manifest
-→ import into G-ACE reusable projection
-→ verify Knowledge Unit / metadata / corpus counts
-→ isolated MVS project
-→ BM25 / Vector / KG index
-→ exact MCP retrieval for every Knowledge Unit
-→ natural-language MCP retrieval for at least one unit of every knowledge_kind
-→ PASS
+F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\
+├─ ready\
+├─ processing\
+├─ processed\
+└─ failed\
 ```
 
-The trial uses only:
+Lifecycle:
 
 ```text
-F:\G-ACE-KB\data\modulecatalog-reusable-trial
+ready
+→ transport-complete claim
+→ processing
+→ ACCEPTED
+→ runtime activation
+→ ACTIVE
+→ processed
 ```
 
-and verifies the formal KB JSONL hash is unchanged.
+Failure classes are separated:
 
-## Formal promotion boundary
+- permanent admission/activation failure → `failed` with diagnostics;
+- transient receiver busy/health/timeout → stays in `processing` as `RETRYABLE`;
+- ACTIVE runtime established but archive move failed → stays in `processing` as `ACTIVE_ARCHIVE_PENDING`;
+- a stranded single `processing` delivery is resumed on the next run;
+- more than one stranded processing delivery fails closed.
 
-Only after the isolated trial passes may the same pinned export be combined into the formal KB.
-Formal promotion must preserve existing repository-history and previously accepted reusable data, reindex under the proven Windows memory-safety envelope, rerun existing retrieval regressions, and then run the reusable-asset MCP gate.
+Receiver stdout/stderr are preserved with delivery evidence.
 
-## Current producer boundary
+A duplicate delivery ID replay never overwrites an earlier processed archive; a unique replay archive name is used while the receiver still enforces Current/idempotency rules.
 
-ModuleCatalog PR #4 currently provides Reusable Asset Schema v1 and the deterministic export implementation on branch `feat/reusable-asset-schema-v1-20261001` at commit `f83461b79344e18dda145978fec5cb8f62896ad1`.
-Its recorded producer regression is:
+## Ordering authority
+
+The active KB has one Current ModuleCatalog snapshot.
+Until the producer contract supplies explicit ordering/predecessor authority, more than one complete delivery in `ready` is rejected with:
+
+```text
+MULTIPLE_READY_DELIVERIES_REQUIRE_ORDER_AUTHORITY
+```
+
+Directory name, filesystem time and Git commit time are never used to guess newest order.
+
+## Runtime activation
+
+An ACCEPTED payload is not operational yet.
+Activation uses the existing KB runtime:
+
+```text
+preserve existing non-Catalog runtime corpus
+replace prior ModuleCatalog reusable snapshot
+build staging corpus
+BM25 / Vector / Knowledge Graph index
+existing repository-history MCP regression
+existing accepted-asset regression when present
+reusable exact/natural/case/relationship/KG gates
+write PREPARED activation journal
+backup-backed Current cutover
+post-cutover MCP against actual Current path
+write matching ACTIVE runtime-state / marker / receipt
+clear activation journal
+archive delivery under processed
+```
+
+The legacy 13-record ModuleCatalog trial snapshot is replaced when the full Catalog snapshot becomes Current; stale Catalog snapshots are not accumulated in normal search.
+
+## Search/use gates
+
+Activation proves more than file ingestion:
+
+```text
+all Knowledge Units exact BM25 retrieval by stable ID
+representative of every Knowledge Kind through BM25 / Vector / Hybrid natural retrieval
+representative Case ID retrieval
+representative Relationship ID retrieval
+KG reusable-data tag query
+KG relation-type tag query when semantics exist
+KG dependency tag query when producer dependencies exist
+KG LINKS_TO presence when resolvable producer relations exist
+existing repository-history retrieval regression
+post-cutover rerun against actual Current path
+```
+
+## Transaction / crash recovery
+
+Before destructive Current cutover, the KB writes:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\activation-transaction.json
+```
+
+The PREPARED journal records current/backup/staging paths required for recovery. A subsequent receive first resolves an unfinished transaction:
+
+- if marker + receipt + runtime-state already agree on target ACTIVE commit, recovery finalizes the committed activation;
+- otherwise the last known Current state is restored from journaled backups;
+- missing/unrecoverable authority fails closed rather than guessing.
+
+## Concurrency and timeout boundaries
+
+Locks serialize the unattended pipeline:
+
+```text
+receiver-service.lock   # single long-running watcher
+processor.lock          # claim/archive lifecycle
+receive.lock            # admission/index/cutover/runtime-health
+```
+
+The inbox processor bounds a receiver attempt (`ReceiverTimeoutSeconds`, default 7200 seconds). Timeout is retryable. On Windows it terminates the complete receiver process tree (`taskkill /T /F`) so MVS/Python descendants are not left mutating the runtime after the wrapper timed out.
+
+## Current authority and receipts
+
+Per-commit receipt:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\receipts\<catalog-commit>.json
+```
+
+Current authority:
+
+```text
+F:\G-ACE-KB\data\knowledge-records\modulecatalog-reusable-active.json
+```
+
+Current reusable snapshot also contains `runtime-state.json`.
+
+States:
+
+```text
+ACCEPTED = admission + local projection passed
+ACTIVE   = indexing + MCP + post-cutover Current verification passed
+```
+
+An old ACTIVE receipt alone is never sufficient to establish Current. Marker, receipt and runtime-state must agree on commit and runtime hashes.
+
+## Ongoing runtime health
+
+`check-modulecatalog-kb-runtime-windows.ps1` verifies Current marker/receipt/runtime-state agreement, formal/reusable/delivery/relationship/case hashes and counts, runtime frontmatter, MVS indexed cardinality and degraded-search warnings.
+
+`-Deep` additionally reruns repository-history and reusable-asset MCP gates across BM25 / Vector / Hybrid / KG.
+
+## Continuous Windows receiver
+
+`watch-modulecatalog-kb-inbox-windows.ps1` polls synchronously with a singleton lock, heartbeat/failure JSONL log and bounded rotation.
+
+`configure-modulecatalog-kb-receiver-task-windows.ps1` can register the watcher as a current-user Limited AtLogOn task. Task settings include bounded restart attempts for transient startup failures (default 12 restarts at a 1-minute interval), for example when the F: runtime is not immediately ready at logon.
+
+Repository implementation does **not** install the task. Master-PC task installation is a separate explicit environment action.
+
+## Current compatibility regression
+
+The current cross-repository compatibility test is pinned to ModuleCatalog producer commit:
+
+```text
+224d96615d4cd3a4c87ca0de581d6124a871a3fd
+```
+
+Recorded regression boundary:
 
 ```text
 80 Assets
 720 Knowledge Units
-160 normalized test-case records
+160 test-case records
 ```
 
-That branch is not treated as merged canonical `main`; the KB trial must pin the exact approved producer commit supplied for the run.
+This pin exists only for CI contract verification. It is not the operational receive source and is not assumed to be merged canonical `main`.
+
+## Completion definition
+
+A delivered Catalog payload is operational only when all applicable conditions hold:
+
+```text
+transport completed and claimed safely
+cryptographic/semantic admission PASS
+projection schema v2 complete
+structured relationship/case hashes and counts intact
+existing BM25 / Vector / Hybrid gates PASS
+existing Knowledge Graph gates PASS
+post-cutover MCP PASS on actual Current path
+ACTIVE receipt + marker + runtime-state agree
+processed archive contains ACTIVE receipt + receiver diagnostics
+no unresolved activation transaction journal
+runtime health PASS
+no timed-out/orphan receiver process remains active
+```
 
 ## Non-negotiable rule
 
-G-ACE KB is not a Skill-only KB.
-Any reusable Code, Logic, Architecture, Design, Contract, Capability, Test Case, Evidence, Pattern or other verified development asset may be indexed when ModuleCatalog can provide it without fabricating canonical facts.
+G-ACE KB is not a Skill-only KB. Any verified reusable Code, Logic, Architecture, Design, Contract, Capability, Test Case, Evidence, Pattern or future reusable development asset may be operated when ModuleCatalog transports it without fabricating canonical facts.
