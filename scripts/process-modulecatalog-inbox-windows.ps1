@@ -1,7 +1,8 @@
 param(
     [string]$Root = 'F:\G-ACE-KB',
     [string]$InboxRoot = '',
-    [string]$Python = 'D:\Development\Runtime\Python313\python.exe'
+    [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
+    [ValidateRange(60,86400)][int]$ReceiverTimeoutSeconds = 7200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,8 +44,8 @@ function Get-DeliveryReadiness {
 
     # The final receiver owns semantic/integrity rejection. This preflight has a
     # narrower job: do not claim a directory while transport is visibly incomplete.
-    # Malformed manifests are therefore considered claimable so admission can
-    # deterministically archive them as FAILED instead of leaving them pending forever.
+    # Malformed manifests are considered claimable so admission can archive them as
+    # FAILED instead of leaving them pending forever.
     try { $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json }
     catch { return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='MANIFEST_PRESENT_UNREADABLE' } }
 
@@ -75,13 +76,32 @@ function Get-DeliveryReadiness {
         if ($files.Count -eq 0) {
             return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_FILES_INVALID:$assetId" }
         }
+
+        $assetRootFull = [System.IO.Path]::GetFullPath($assetDir)
+        if (-not $assetRootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+            $assetRootFull += [System.IO.Path]::DirectorySeparatorChar
+        }
+
         foreach ($file in $files) {
             $relative = [string]$file.path
             if (-not $relative) {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_INVALID:$assetId" }
             }
-            $target = Join-Path $assetDir ($relative -replace '/', '\')
-            if (-not (Test-Path $target -PathType Leaf)) {
+
+            # Never let preflight follow a manifest path outside the delivery tree.
+            # Unsafe paths are claimable only so the authoritative admission gate can
+            # reject/archive them without this lightweight probe touching the target.
+            $normalizedRelative = $relative -replace '/', '\'
+            if ([System.IO.Path]::IsPathRooted($normalizedRelative) -or $normalizedRelative -match '(^|\\)\.\.(\\|$)') {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_UNSAFE:${assetId}:$relative" }
+            }
+            try { $targetFull = [System.IO.Path]::GetFullPath((Join-Path $assetDir $normalizedRelative)) }
+            catch { return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_INVALID:${assetId}:$relative" } }
+            if (-not $targetFull.StartsWith($assetRootFull,[System.StringComparison]::OrdinalIgnoreCase)) {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_ESCAPE:${assetId}:$relative" }
+            }
+
+            if (-not (Test-Path $targetFull -PathType Leaf)) {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="MISSING_BUNDLE_FILE:${assetId}:$relative" }
             }
             $expectedSize = -1L
@@ -89,7 +109,7 @@ function Get-DeliveryReadiness {
             if ($expectedSize -lt 0) {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_SIZE_INVALID:${assetId}:$relative" }
             }
-            $actualSize = (Get-Item $target).Length
+            $actualSize = (Get-Item $targetFull).Length
             if ($actualSize -lt $expectedSize) {
                 return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="BUNDLE_FILE_STILL_COPYING:${assetId}:$relative:$actualSize/$expectedSize" }
             }
@@ -163,12 +183,21 @@ try {
     $receiverStderr = Join-Path $processingPath $receiverStderrName
     $activated = $false
     $retryable = $false
+    $process = $null
 
     try {
         Write-Host "=== PROCESS DELIVERY: $deliveryName ==="
         $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-ProcessArgument $Receiver),'-Root',(Quote-ProcessArgument $Root),'-Python',(Quote-ProcessArgument $Python),'-DeliveryRoot',(Quote-ProcessArgument $processingPath))
         $process = Start-Process -FilePath $PowerShellHost -ArgumentList $args -WorkingDirectory $Repo -NoNewWindow -PassThru -RedirectStandardOutput $receiverStdout -RedirectStandardError $receiverStderr
-        $process.WaitForExit(); $process.Refresh()
+        $waitMilliseconds = [int64]$ReceiverTimeoutSeconds * 1000
+        if ($waitMilliseconds -gt [int]::MaxValue) { throw "RECEIVER_TIMEOUT_TOO_LARGE_SECONDS=$ReceiverTimeoutSeconds" }
+        if (-not $process.WaitForExit([int]$waitMilliseconds)) {
+            $retryable = $true
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            try { $process.WaitForExit(10000) | Out-Null } catch { }
+            throw "MODULECATALOG_RECEIVER_TIMEOUT=${ReceiverTimeoutSeconds}s DELIVERY=$processingPath"
+        }
+        $process.Refresh()
         $exitCode = [int]$process.ExitCode
         if ($exitCode -ne 0) {
             $stderrTail = Read-LogTail -Path $receiverStderr
@@ -226,6 +255,11 @@ try {
             Write-Host "GACE_MODULECATALOG_INBOX=FAILED ARCHIVE=$failedPath RECEIVER_STDOUT=$receiverStdoutName RECEIVER_STDERR=$receiverStderrName"
         }
         throw $failure
+    }
+    finally {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 finally {
