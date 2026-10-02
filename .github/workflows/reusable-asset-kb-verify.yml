@@ -32,6 +32,7 @@ jobs:
             scripts/import_modulecatalog_reusable_export.py \
             scripts/import_reusable_asset_bundle.py \
             scripts/replace_modulecatalog_reusable_snapshot.py \
+            scripts/enrich_modulecatalog_search_corpus.py \
             scripts/accept_modulecatalog_delivery.py \
             tests/mcp_reusable_asset_e2e.py \
             tests/test_accept_modulecatalog_delivery.py
@@ -125,14 +126,17 @@ jobs:
           assert receipt['status'] == 'ACCEPTED'
           assert state['assetCount'] == 80
           assert state['knowledgeUnitCount'] == 720
+          assert state['corpusRuntimeEnrichment'] == 'mvs-4.1.14-frontmatter-v1'
           assert len(metadata) == 720
           assert len(records) == 720
           assert len(corpus) == 720
+          assert all(path.read_text().startswith('---\n') for path in corpus)
+          assert all('"gace-reusable-asset"' in path.read_text() for path in corpus)
           assert len({row['parent_asset_id'] for row in metadata}) == 80
           kinds = {row['knowledge_kind'] for row in metadata}
           required = {'discovery','documentation','design','logic','architecture','evidence','code','test_case'}
           assert required <= kinds, sorted(kinds)
           assert all(row['verification']['status'] == 'verified' for row in metadata)
           assert all(row['_gace']['commit'] == commit for row in metadata)
-          print(f'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)}')
+          print(f'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS ASSETS=80 RECORDS=720 KINDS={len(kinds)} KG_READY=YES')
           PY
