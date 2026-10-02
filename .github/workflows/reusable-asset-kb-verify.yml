@@ -33,10 +33,12 @@ jobs:
             scripts/import_reusable_asset_bundle.py \
             scripts/replace_modulecatalog_reusable_snapshot.py \
             scripts/enrich_modulecatalog_search_corpus.py \
+            scripts/prefix_modulecatalog_runtime_links.py \
             scripts/accept_modulecatalog_delivery.py \
             tests/mcp_reusable_asset_e2e.py \
             tests/test_accept_modulecatalog_delivery.py \
-            tests/test_enrich_modulecatalog_search_corpus.py
+            tests/test_enrich_modulecatalog_search_corpus.py \
+            tests/test_prefix_modulecatalog_runtime_links.py
 
       - name: Node syntax gate
         run: node --check scripts/run_modulecatalog_reusable_export.mjs
@@ -85,6 +87,9 @@ jobs:
 
       - name: Search corpus KG relation projection tests
         run: python -B tests/test_enrich_modulecatalog_search_corpus.py
+
+      - name: Runtime KG link prefix tests
+        run: python -B tests/test_prefix_modulecatalog_runtime_links.py
 
       - name: Reusable export importer fixture tests
         run: python -B tests/test_import_modulecatalog_reusable_export.py
