@@ -9,6 +9,9 @@ $Intake = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $LockPath = Join-Path $Intake 'receive.lock'
 New-Item -ItemType Directory -Path $Intake -Force | Out-Null
 
+$HostExe = (Get-Process -Id $PID).Path
+if (-not $HostExe -or -not (Test-Path $HostExe)) { throw "CURRENT_POWERSHELL_HOST_MISSING=$HostExe" }
+
 $Held = $null
 try {
     $Held = [System.IO.File]::Open(
@@ -18,13 +21,13 @@ try {
         [System.IO.FileShare]::None
     )
 
-    $output = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root 2>&1 | Out-String)
+    $output = (& $HostExe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root 2>&1 | Out-String)
     $code = $LASTEXITCODE
     if ($code -eq 0) { throw "HEALTH_LOCK_GATE_FALSE_PASS OUTPUT=$output" }
     if ($output -notmatch 'RUNTIME_RECEIVER_BUSY=') {
         throw "HEALTH_LOCK_GATE_WRONG_ERROR EXIT=$code OUTPUT=$output"
     }
-    Write-Host 'MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS'
+    Write-Host "MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS HOST=$HostExe"
 }
 finally {
     if ($null -ne $Held) { $Held.Dispose() }
