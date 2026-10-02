@@ -61,6 +61,7 @@ jobs:
             'tests/test_modulecatalog_inbox_lifecycle.ps1',
             'tests/test_modulecatalog_transport_readiness.ps1',
             'tests/test_modulecatalog_receiver_timeout.ps1',
+            'tests/test_modulecatalog_duplicate_delivery_archive.ps1',
             'tests/test_modulecatalog_activation_recovery.ps1',
             'tests/test_modulecatalog_runtime_health_lock.ps1',
             'tests/test_modulecatalog_receiver_service.ps1'
@@ -91,6 +92,10 @@ jobs:
       - name: Receiver timeout recovery
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_timeout.ps1
+
+      - name: Duplicate delivery archive replay
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_duplicate_delivery_archive.ps1
 
       - name: Activation journal recovery
         shell: pwsh
