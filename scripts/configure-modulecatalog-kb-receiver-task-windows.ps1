@@ -4,8 +4,10 @@ param(
     [ValidateRange(1,3600)][int]$PollSeconds = 10,
     [ValidateRange(1,3600)][int]$RetryBackoffSeconds = 60,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
+    [ValidateRange(0,86400)][int]$RuntimeHealthSeconds = 300,
     [ValidateRange(1,999)][int]$RestartCount = 12,
     [ValidateRange(1,60)][int]$RestartIntervalMinutes = 1,
+    [ValidateRange(5,120)][int]$StartupVerifySeconds = 20,
     [switch]$Uninstall
 )
 
@@ -32,6 +34,8 @@ $Repo = Join-Path $Root 'repo'
 $Watcher = Join-Path $Repo 'scripts\watch-modulecatalog-kb-inbox-windows.ps1'
 $IntakeRoot = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $StopPath = Join-Path $IntakeRoot 'receiver.stop'
+$ServiceLockPath = Join-Path $IntakeRoot 'receiver-service.lock'
+$ServiceLogPath = Join-Path $IntakeRoot 'receiver-service.jsonl'
 $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if (-not $CurrentIdentity) { throw 'CURRENT_WINDOWS_IDENTITY_MISSING' }
 
@@ -61,7 +65,8 @@ $arguments = @(
     '-Python',('"' + $Python + '"'),
     '-PollSeconds',[string]$PollSeconds,
     '-RetryBackoffSeconds',[string]$RetryBackoffSeconds,
-    '-HeartbeatSeconds',[string]$HeartbeatSeconds
+    '-HeartbeatSeconds',[string]$HeartbeatSeconds,
+    '-RuntimeHealthSeconds',[string]$RuntimeHealthSeconds
 ) -join ' '
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $arguments -WorkingDirectory $Repo
@@ -79,6 +84,20 @@ $principal = New-ScheduledTaskPrincipal `
     -LogonType Interactive `
     -RunLevel Limited
 
+# A running old task would make MultipleInstances=IgnoreNew silently preserve the
+# previous command line after an update. Stop it first so the registered config
+# below is the one that actually starts.
+Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
+$stopDeadline = [DateTime]::UtcNow.AddSeconds(10)
+do {
+    $existing = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $existing -or $existing.State -ne 'Running') { break }
+    Start-Sleep -Milliseconds 250
+} while ([DateTime]::UtcNow -lt $stopDeadline)
+if ($null -ne $existing -and $existing.State -eq 'Running') {
+    throw "RECEIVER_TASK_OLD_INSTANCE_DID_NOT_STOP=${TaskPath}${TaskName}"
+}
+
 Register-ScheduledTask `
     -TaskPath $TaskPath `
     -TaskName $TaskName `
@@ -86,7 +105,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'Consumes transported ModuleCatalog KBData and activates it through the existing G-ACE KB runtime.' `
+    -Description 'Consumes transported ModuleCatalog KBData, activates it through the existing G-ACE KB runtime, and continuously verifies active runtime health.' `
     -Force | Out-Null
 
 $registered = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
@@ -105,18 +124,38 @@ if ([string]$registered.Principal.UserId -ine $CurrentIdentity) {
     throw "RECEIVER_TASK_PRINCIPAL_MISMATCH expected=$CurrentIdentity actual=$($registered.Principal.UserId)"
 }
 
+$StartRequestedUtc = [DateTime]::UtcNow
 Start-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
+$deadline = [DateTime]::UtcNow.AddSeconds($StartupVerifySeconds)
+$startupVerified = $false
+$task = $null
 do {
     Start-Sleep -Milliseconds 250
     $task = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
-    if ($task.State -eq 'Running') { break }
+    if ($task.State -ne 'Running') { continue }
+    if (-not (Test-Path $ServiceLockPath) -or -not (Test-Path $ServiceLogPath)) { continue }
+
+    $events = @()
+    try {
+        $events = @(Get-Content $ServiceLogPath -Tail 50 | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    }
+    catch { $events = @() }
+    $recentStarted = @($events | Where-Object {
+        $_.status -eq 'STARTED' -and
+        ([DateTime]$_.atUtc).ToUniversalTime() -ge $StartRequestedUtc.AddSeconds(-2)
+    })
+    if ($recentStarted.Count -gt 0) {
+        $startupVerified = $true
+        break
+    }
 } while ([DateTime]::UtcNow -lt $deadline)
 
-if ($task.State -ne 'Running') {
-    throw "RECEIVER_TASK_NOT_RUNNING_AFTER_START=$($task.State)"
+if (-not $startupVerified) {
+    Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
+    throw "RECEIVER_TASK_STARTUP_HEALTH_NOT_VERIFIED STATE=$($task.State) LOCK=$ServiceLockPath LOG=$ServiceLogPath"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) STARTUP=VERIFIED POLL_SECONDS=$PollSeconds RETRY_BACKOFF_SECONDS=$RetryBackoffSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RUNTIME_HEALTH_SECONDS=$RuntimeHealthSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
+Write-Host "SERVICE_LOG=$ServiceLogPath"
