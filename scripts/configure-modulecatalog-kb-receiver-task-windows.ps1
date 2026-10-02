@@ -3,6 +3,8 @@ param(
     [string]$Python = 'D:\Development\Runtime\Python313\python.exe',
     [ValidateRange(1,3600)][int]$PollSeconds = 10,
     [ValidateRange(1,86400)][int]$HeartbeatSeconds = 300,
+    [ValidateRange(1,999)][int]$RestartCount = 12,
+    [ValidateRange(1,60)][int]$RestartIntervalMinutes = 1,
     [switch]$Uninstall
 )
 
@@ -23,8 +25,6 @@ foreach ($command in @(
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "SCHEDULED_TASK_COMMAND_MISSING=$command" }
 }
 
-# Use the root Task Scheduler folder so first-time setup does not depend on a
-# pre-created custom scheduler folder. The task name remains G-ACE-specific.
 $TaskPath = '\'
 $TaskName = 'G-ACE-KB-ModuleCatalogReceiver'
 $Repo = Join-Path $Root 'repo'
@@ -69,6 +69,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
     -MultipleInstances IgnoreNew `
+    -RestartCount $RestartCount `
+    -RestartInterval (New-TimeSpan -Minutes $RestartIntervalMinutes) `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
 $principal = New-ScheduledTaskPrincipal `
     -UserId $CurrentIdentity `
@@ -113,6 +115,6 @@ if ($task.State -ne 'Running') {
     throw "RECEIVER_TASK_NOT_RUNNING_AFTER_START=$($task.State)"
 }
 
-Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) POLL_SECONDS=$PollSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds"
+Write-Host "GACE_MODULECATALOG_RECEIVER_TASK=INSTALLED TASK=${TaskPath}${TaskName} STATE=$($task.State) POLL_SECONDS=$PollSeconds HEARTBEAT_SECONDS=$HeartbeatSeconds RESTART_COUNT=$RestartCount RESTART_INTERVAL_MIN=$RestartIntervalMinutes"
 Write-Host "WATCHER=$Watcher"
 Write-Host "STOP_MARKER=$StopPath"
