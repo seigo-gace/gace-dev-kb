@@ -66,6 +66,13 @@ def frontmatter_for(row: dict[str, Any], related_files: list[str]) -> str:
     for value in classification.get("tags") or []:
         tags.append(f"catalog-tag-{safe_tag(value)}")
 
+    # Relationship semantics are already canonical/verified in the accepted
+    # projection. Surface their relation types as deterministic KG tags so the
+    # existing kg_query tag path can retrieve them without a second graph engine.
+    for relationship in row.get("relationships") or []:
+        if isinstance(relationship, dict) and relationship.get("relation"):
+            tags.append(f"relation-{safe_tag(relationship['relation'])}")
+
     # Asset-level dependency semantics are canonical Catalog data. Project them
     # only on the discovery document so the existing MVS KG gets one stable
     # relationship-bearing node per Asset instead of duplicating the edge across
@@ -123,6 +130,7 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
     written = 0
     relation_link_docs = 0
     dependency_link_docs = 0
+    relation_tag_docs = 0
     for row, path in zip(rows, files, strict=True):
         current = path.read_text(encoding="utf-8")
         if current.startswith("---\n"):
@@ -130,7 +138,10 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
 
         related: list[str] = []
         relationship_added = False
-        for rel in row.get("relationships") or []:
+        row_relationships = row.get("relationships") or []
+        if any(isinstance(rel, dict) and rel.get("relation") for rel in row_relationships):
+            relation_tag_docs += 1
+        for rel in row_relationships:
             if not isinstance(rel, dict):
                 continue
             source = str(rel.get("from") or "")
@@ -169,8 +180,8 @@ def enrich(metadata_path: Path, corpus_dir: Path) -> int:
 
     print(
         f"GACE_MODULECATALOG_CORPUS_ENRICH=PASS RECORDS={written} "
-        f"TAG={BASE_TAG} RELATION_LINK_DOCS={relation_link_docs} "
-        f"DEPENDENCY_LINK_DOCS={dependency_link_docs}"
+        f"TAG={BASE_TAG} RELATION_TAG_DOCS={relation_tag_docs} "
+        f"RELATION_LINK_DOCS={relation_link_docs} DEPENDENCY_LINK_DOCS={dependency_link_docs}"
     )
     return written
 
