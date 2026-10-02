@@ -75,6 +75,31 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         self.assertIn('"asset-asset-a"', corpus_text)
         self.assertIn('"knowledge-kind-logic"', corpus_text)
 
+    def test_accepts_zero_optional_sidecars(self):
+        asset_dir = self.fixture.export_root / "assets" / "asset-a"
+        (asset_dir / "relationships.jsonl").write_text("", encoding="utf-8")
+        (asset_dir / "cases.jsonl").write_text("", encoding="utf-8")
+        top = json.loads((self.fixture.export_root / "manifest.json").read_text(encoding="utf-8"))
+        entry = top["assets"][0]
+        entry["relationships"] = 0
+        entry["cases"] = 0
+        self.fixture.refresh_bundle_manifest("asset-a", entry)
+        self.fixture.write_export([entry])
+
+        receipt = accept_module.accept_delivery(
+            self.fixture.export_root, self.accepted, self.receipt
+        )
+        state = json.loads((self.accepted / "state.json").read_text(encoding="utf-8"))
+        projection = self.accepted / "projection"
+        self.assertEqual(receipt["status"], "ACCEPTED")
+        self.assertEqual(receipt["relationshipCount"], 0)
+        self.assertEqual(receipt["caseCount"], 0)
+        self.assertEqual(state["relationshipCount"], 0)
+        self.assertEqual(state["caseCount"], 0)
+        self.assertEqual((projection / "relationships.jsonl").read_text(encoding="utf-8"), "")
+        self.assertEqual((projection / "cases.jsonl").read_text(encoding="utf-8"), "")
+        self.assertEqual(len(list((projection / "records").glob("*.md"))), 1)
+
     def test_idempotent_accept_reverifies_and_does_not_duplicate_projection(self):
         first = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         second = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
