@@ -33,6 +33,73 @@ function Unique-FailedPath {
     param([string]$Name)
     return Join-Path $FailedRoot ("{0}-{1}-{2}" -f $Name,(Get-Date).ToString('yyyyMMdd-HHmmss'),([Guid]::NewGuid().ToString('N').Substring(0,8)))
 }
+function Get-DeliveryReadiness {
+    param([System.IO.DirectoryInfo]$Directory)
+
+    $manifestPath = Join-Path $Directory.FullName 'manifest.json'
+    if (-not (Test-Path $manifestPath)) {
+        return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason='NO_MANIFEST' }
+    }
+
+    # The final receiver owns semantic/integrity rejection. This preflight has a
+    # narrower job: do not claim a directory while transport is visibly incomplete.
+    # Malformed manifests are therefore considered claimable so admission can
+    # deterministically archive them as FAILED instead of leaving them pending forever.
+    try { $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json }
+    catch { return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='MANIFEST_PRESENT_UNREADABLE' } }
+
+    $assets = @($manifest.assets)
+    $declaredAssetCount = -1
+    try { $declaredAssetCount = [int]$manifest.assetCount } catch { }
+    if ($declaredAssetCount -lt 1 -or $assets.Count -ne $declaredAssetCount) {
+        return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='MANIFEST_CARDINALITY_INVALID' }
+    }
+
+    foreach ($asset in $assets) {
+        $assetId = [string]$asset.id
+        if (-not $assetId) {
+            return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='MANIFEST_ASSET_ID_INVALID' }
+        }
+        $assetDir = Join-Path $Directory.FullName (Join-Path 'assets' $assetId)
+        $bundleManifestPath = Join-Path $assetDir 'manifest.json'
+        if (-not (Test-Path $assetDir)) {
+            return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="MISSING_ASSET_DIR:$assetId" }
+        }
+        if (-not (Test-Path $bundleManifestPath)) {
+            return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="MISSING_ASSET_MANIFEST:$assetId" }
+        }
+
+        try { $bundleManifest = Get-Content $bundleManifestPath -Raw | ConvertFrom-Json }
+        catch { return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_UNREADABLE:$assetId" } }
+        $files = @($bundleManifest.files)
+        if ($files.Count -eq 0) {
+            return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_FILES_INVALID:$assetId" }
+        }
+        foreach ($file in $files) {
+            $relative = [string]$file.path
+            if (-not $relative) {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_PATH_INVALID:$assetId" }
+            }
+            $target = Join-Path $assetDir ($relative -replace '/', '\')
+            if (-not (Test-Path $target -PathType Leaf)) {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="MISSING_BUNDLE_FILE:${assetId}:$relative" }
+            }
+            $expectedSize = -1L
+            try { $expectedSize = [long]$file.size } catch { }
+            if ($expectedSize -lt 0) {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason="ASSET_MANIFEST_SIZE_INVALID:${assetId}:$relative" }
+            }
+            $actualSize = (Get-Item $target).Length
+            if ($actualSize -lt $expectedSize) {
+                return [pscustomobject]@{ Directory=$Directory; Ready=$false; Reason="BUNDLE_FILE_STILL_COPYING:${assetId}:$relative:$actualSize/$expectedSize" }
+            }
+            # A file larger than declared is not a transport-in-progress signal;
+            # claim it and let the cryptographic admission gate reject it as corrupt.
+        }
+    }
+
+    return [pscustomobject]@{ Directory=$Directory; Ready=$true; Reason='TRANSPORT_COMPLETE' }
+}
 
 $ProcessorLockPath = Join-Path $InboxBase 'processor.lock'
 $ProcessorLock = $null
@@ -62,9 +129,12 @@ try {
     }
     else {
         $AllReady = @(Get-ChildItem $InboxRoot -Directory | Sort-Object Name)
-        $Deliveries = @($AllReady | Where-Object { Test-Path (Join-Path $_.FullName 'manifest.json') })
-        $Incomplete = @($AllReady | Where-Object { -not (Test-Path (Join-Path $_.FullName 'manifest.json')) })
-        foreach ($item in $Incomplete) { Write-Host "GACE_MODULECATALOG_INBOX_PENDING=NO_MANIFEST DELIVERY=$($item.FullName)" }
+        $Readiness = @($AllReady | ForEach-Object { Get-DeliveryReadiness -Directory $_ })
+        $Deliveries = @($Readiness | Where-Object { $_.Ready } | ForEach-Object { $_.Directory })
+        $Incomplete = @($Readiness | Where-Object { -not $_.Ready })
+        foreach ($item in $Incomplete) {
+            Write-Host "GACE_MODULECATALOG_INBOX_PENDING=$($item.Reason) DELIVERY=$($item.Directory.FullName)"
+        }
         if ($Deliveries.Count -eq 0) {
             Write-Host "GACE_MODULECATALOG_INBOX=PASS READY=0 PENDING=$($Incomplete.Count) ROOT=$InboxRoot"
             return
