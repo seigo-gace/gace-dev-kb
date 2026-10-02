@@ -51,15 +51,26 @@ class AcceptModuleCatalogDeliveryTests(unittest.TestCase):
         state = json.loads((self.accepted / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["catalogCommit"], self.fixture.commit)
         self.assertEqual(state["corpusCount"], 1)
+        self.assertEqual(
+            state["corpusRuntimeEnrichment"], "mvs-4.1.14-frontmatter-v1"
+        )
         self.assertTrue((self.accepted / "projection" / "knowledge-records.jsonl").is_file())
         self.assertTrue((self.accepted / "projection" / "knowledge-metadata.jsonl").is_file())
-        self.assertEqual(len(list((self.accepted / "projection" / "records").glob("*.md"))), 1)
+        corpus_files = list((self.accepted / "projection" / "records").glob("*.md"))
+        self.assertEqual(len(corpus_files), 1)
+        corpus_text = corpus_files[0].read_text(encoding="utf-8")
+        self.assertTrue(corpus_text.startswith("---\n"))
+        self.assertIn('"gace-reusable-asset"', corpus_text)
+        self.assertIn('"asset-asset-a"', corpus_text)
+        self.assertIn('"knowledge-kind-logic"', corpus_text)
 
     def test_idempotent_accept_does_not_duplicate_projection(self):
         first = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         second = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
         self.assertEqual(first["deliveryManifestSha256"], second["deliveryManifestSha256"])
-        self.assertEqual(len(list((self.accepted / "projection" / "records").glob("*.md"))), 1)
+        corpus_files = list((self.accepted / "projection" / "records").glob("*.md"))
+        self.assertEqual(len(corpus_files), 1)
+        self.assertEqual(corpus_files[0].read_text(encoding="utf-8").count("---\n"), 2)
 
     def test_active_receipt_is_not_downgraded(self):
         receipt = accept_module.accept_delivery(self.fixture.export_root, self.accepted, self.receipt)
