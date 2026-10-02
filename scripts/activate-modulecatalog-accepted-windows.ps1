@@ -20,6 +20,8 @@ $AcceptedState = Join-Path $AcceptedRoot 'state.json'
 $Projection = Join-Path $AcceptedRoot 'projection'
 $NewRecords = Join-Path $Projection 'knowledge-records.jsonl'
 $NewMetadata = Join-Path $Projection 'knowledge-metadata.jsonl'
+$NewRelationships = Join-Path $Projection 'relationships.jsonl'
+$NewCases = Join-Path $Projection 'cases.jsonl'
 $NewCorpus = Join-Path $Projection 'records'
 $DeliveryManifest = Join-Path $AcceptedRoot 'delivery-manifest.json'
 
@@ -38,7 +40,7 @@ $ActivationJournal = Join-Path $Root 'data\knowledge-intake\modulecatalog\activa
 $ReusableCorpusPrefix = 'accepted-modulecatalog-reusable-'
 $ModuleCatalogRepository = 'seigo-gace/modular-catalog'
 
-foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
+foreach ($path in @($Repo,$RuntimePython,$Mvs,$SnapshotBuilder,$SafetyPatch,$RecoveryScript,$HistoryProbe,$ReusableProbe,$AcceptedState,$NewRecords,$NewMetadata,$NewRelationships,$NewCases,$NewCorpus,$DeliveryManifest,$FormalJsonl,$CurrentSearch,$CurrentRecords)) {
     if (-not (Test-Path $path)) { throw "REQUIRED_PATH_MISSING=$path" }
 }
 
@@ -115,15 +117,24 @@ if (Test-Path $ActivationJournal) {
 $State = Get-Content $AcceptedState -Raw | ConvertFrom-Json
 if ([string]$State.status -ne 'ACCEPTED') { throw "ACCEPTED_STATE_INVALID=$($State.status)" }
 if ([string]$State.catalogRepository -ne $ModuleCatalogRepository) { throw "ACCEPTED_REPOSITORY_INVALID=$($State.catalogRepository)" }
+if ([int]$State.projectionSchemaVersion -ne 2) { throw "ACCEPTED_PROJECTION_SCHEMA_UNSUPPORTED=$($State.projectionSchemaVersion)" }
 $CatalogCommit = [string]$State.catalogCommit
 $ExpectedAssetCount = [int]$State.assetCount
 $ExpectedRecordCount = [int]$State.knowledgeUnitCount
-if ($CatalogCommit.Length -ne 40 -or $ExpectedAssetCount -lt 1 -or $ExpectedRecordCount -lt 1) { throw 'ACCEPTED_STATE_CARDINALITY_INVALID' }
+$ExpectedRelationshipCount = [int]$State.relationshipCount
+$ExpectedCaseCount = [int]$State.caseCount
+if ($CatalogCommit.Length -ne 40 -or $ExpectedAssetCount -lt 1 -or $ExpectedRecordCount -lt 1 -or $ExpectedRelationshipCount -lt 0 -or $ExpectedCaseCount -lt 0) { throw 'ACCEPTED_STATE_CARDINALITY_INVALID' }
 if ((Get-Sha256 $NewRecords) -ne [string]$State.knowledgeRecordsSha256) { throw 'ACCEPTED_RECORDS_HASH_MISMATCH' }
 if ((Get-Sha256 $NewMetadata) -ne [string]$State.knowledgeMetadataSha256) { throw 'ACCEPTED_METADATA_HASH_MISMATCH' }
+if ((Get-Sha256 $NewRelationships) -ne [string]$State.relationshipsSha256) { throw 'ACCEPTED_RELATIONSHIPS_HASH_MISMATCH' }
+if ((Get-Sha256 $NewCases) -ne [string]$State.casesSha256) { throw 'ACCEPTED_CASES_HASH_MISMATCH' }
+$NewRelationshipCount = @(Get-Content $NewRelationships | Where-Object { $_.Trim() }).Count
+$NewCaseCount = @(Get-Content $NewCases | Where-Object { $_.Trim() }).Count
+if ($NewRelationshipCount -ne $ExpectedRelationshipCount) { throw "ACCEPTED_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationshipCount actual=$NewRelationshipCount" }
+if ($NewCaseCount -ne $ExpectedCaseCount) { throw "ACCEPTED_CASE_COUNT_MISMATCH expected=$ExpectedCaseCount actual=$NewCaseCount" }
 $NewCorpusCount = @(Get-ChildItem $NewCorpus -Filter '*.md' -File).Count
 if ($NewCorpusCount -ne $ExpectedRecordCount) { throw "ACCEPTED_CORPUS_COUNT_MISMATCH expected=$ExpectedRecordCount actual=$NewCorpusCount" }
-Write-Host "GACE_DELIVERY_ACCEPTANCE_AUTHORITY=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount RECORDS=$ExpectedRecordCount"
+Write-Host "GACE_DELIVERY_ACCEPTANCE_AUTHORITY=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount RECORDS=$ExpectedRecordCount RELATIONSHIPS=$ExpectedRelationshipCount CASES=$ExpectedCaseCount"
 
 $FormalRows = @(Get-Content $FormalJsonl | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
 $CurrentFormalCount = $FormalRows.Count
@@ -189,6 +200,8 @@ if (Test-Path $StagingReusableSnapshot) { Remove-Item $StagingReusableSnapshot -
 New-Item -ItemType Directory -Path $StagingReusableSnapshot -Force | Out-Null
 Copy-Item $NewRecords (Join-Path $StagingReusableSnapshot 'knowledge-records.jsonl') -Force
 Copy-Item $NewMetadata (Join-Path $StagingReusableSnapshot 'knowledge-metadata.jsonl') -Force
+Copy-Item $NewRelationships (Join-Path $StagingReusableSnapshot 'relationships.jsonl') -Force
+Copy-Item $NewCases (Join-Path $StagingReusableSnapshot 'cases.jsonl') -Force
 Copy-Item $DeliveryManifest (Join-Path $StagingReusableSnapshot 'delivery-manifest.json') -Force
 Copy-Item $AcceptedState (Join-Path $StagingReusableSnapshot 'acceptance-state.json') -Force
 $SnapshotCorpus = Join-Path $StagingReusableSnapshot 'records'
@@ -248,20 +261,31 @@ try {
     & $RuntimePython -B $ReusableProbe --python $RuntimePython --project-root $CurrentSearch --metadata (Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl') --expected-count $ExpectedRecordCount --timeout 180
     if ($LASTEXITCODE -ne 0) { throw "POST_CUTOVER_REUSABLE_MCP_FAILED=$LASTEXITCODE" }
 
+    $ActiveRelationships = Join-Path $CurrentReusableSnapshot 'relationships.jsonl'
+    $ActiveCases = Join-Path $CurrentReusableSnapshot 'cases.jsonl'
+    if (-not (Test-Path $ActiveRelationships) -or -not (Test-Path $ActiveCases)) { throw 'POST_CUTOVER_STRUCTURED_SIDECAR_MISSING' }
+    $ActiveRelationshipCount = @(Get-Content $ActiveRelationships | Where-Object { $_.Trim() }).Count
+    $ActiveCaseCount = @(Get-Content $ActiveCases | Where-Object { $_.Trim() }).Count
+    if ($ActiveRelationshipCount -ne $ExpectedRelationshipCount) { throw "POST_CUTOVER_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationshipCount actual=$ActiveRelationshipCount" }
+    if ($ActiveCaseCount -ne $ExpectedCaseCount) { throw "POST_CUTOVER_CASE_COUNT_MISMATCH expected=$ExpectedCaseCount actual=$ActiveCaseCount" }
+
     $Active = [ordered]@{
         schemaVersion = 1
+        projectionSchemaVersion = 2
         status = 'ACTIVE'
         catalogRepository = $ModuleCatalogRepository
         catalogCommit = $CatalogCommit
         assetCount = $ExpectedAssetCount
         knowledgeUnitCount = $ExpectedRecordCount
-        relationshipCount = [int]$State.relationshipCount
-        caseCount = [int]$State.caseCount
+        relationshipCount = $ExpectedRelationshipCount
+        caseCount = $ExpectedCaseCount
         corpusCount = $NewCorpusCount
         totalFormalRecordCount = $ExpectedTotal
         formalKbSha256 = Get-Sha256 $FormalJsonl
         knowledgeRecordsSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-records.jsonl')
         knowledgeMetadataSha256 = Get-Sha256 (Join-Path $CurrentReusableSnapshot 'knowledge-metadata.jsonl')
+        relationshipsSha256 = Get-Sha256 $ActiveRelationships
+        casesSha256 = Get-Sha256 $ActiveCases
         deliveryManifestSha256 = Get-Sha256 $DeliveryManifest
         acceptedRoot = $AcceptedRoot
         activatedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -276,6 +300,11 @@ try {
     $MarkerCheck = Get-Content $ActivationMarker -Raw | ConvertFrom-Json
     if ([string]$ReceiptCheck.status -ne 'ACTIVE' -or [string]$ReceiptCheck.catalogCommit -ne $CatalogCommit) { throw 'ACTIVE_RECEIPT_WRITE_VERIFY_FAILED' }
     if ([string]$MarkerCheck.status -ne 'ACTIVE' -or [string]$MarkerCheck.catalogCommit -ne $CatalogCommit) { throw 'ACTIVE_MARKER_WRITE_VERIFY_FAILED' }
+    foreach ($name in @('knowledgeRecordsSha256','knowledgeMetadataSha256','relationshipsSha256','casesSha256','deliveryManifestSha256')) {
+        if ([string]$ReceiptCheck.$name -ne [string]$Active.$name -or [string]$MarkerCheck.$name -ne [string]$Active.$name) {
+            throw "ACTIVE_AUTHORITY_HASH_VERIFY_FAILED=$name"
+        }
+    }
 }
 catch {
     $failure = $_
@@ -298,6 +327,6 @@ catch {
 
 Remove-Item $BackupActivationMarker,$BackupReceipt -Force -ErrorAction SilentlyContinue
 Remove-Item $ActivationJournal -Force -ErrorAction SilentlyContinue
-Write-Host "GACE_MODULECATALOG_RUNTIME_ACTIVATION=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount REUSABLE=$ExpectedRecordCount TOTAL=$ExpectedTotal"
+Write-Host "GACE_MODULECATALOG_RUNTIME_ACTIVATION=PASS COMMIT=$CatalogCommit ASSETS=$ExpectedAssetCount REUSABLE=$ExpectedRecordCount RELATIONSHIPS=$ExpectedRelationshipCount CASES=$ExpectedCaseCount TOTAL=$ExpectedTotal"
 Write-Host "GACE_MODULECATALOG_POST_CUTOVER_MCP=PASS"
 Write-Host "RECEIPT=$ReceiptPath"
