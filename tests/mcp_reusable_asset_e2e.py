@@ -199,9 +199,9 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                             f"ID={knowledge_id} MODES=bm25,vector,hybrid"
                         )
 
-                    # The existing Knowledge Graph must be healthy and the accepted
-                    # reusable documents must actually be present in it. The KB-side
-                    # projection adds a deterministic frontmatter tag consumed by MVS.
+                    # MVS 4.1.14 kg_stats exposes total_entities + relationships but not
+                    # doc-section count. Document presence is therefore proven by the
+                    # following tag query, not by an unsupported stats field.
                     kg_stats = await wait(
                         session.call_tool("kg_stats", arguments={}),
                         timeout,
@@ -216,14 +216,9 @@ async def run(python: Path, root: Path, metadata: Path, expected: int, timeout: 
                         raise RuntimeError(f"MCP_REUSABLE_KG_STATS_STATUS_INVALID={stats}")
                     statistics = stats.get("statistics") if isinstance(stats.get("statistics"), dict) else {}
                     total_entities = int(statistics.get("total_entities", 0) or 0)
-                    doc_sections = int(statistics.get("doc_sections", 0) or 0)
-                    if total_entities <= 0 or doc_sections <= 0:
-                        raise RuntimeError(
-                            f"MCP_REUSABLE_KG_EMPTY entities={total_entities} doc_sections={doc_sections}"
-                        )
-                    print(
-                        f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities} DOC_SECTIONS={doc_sections}"
-                    )
+                    if total_entities <= 0:
+                        raise RuntimeError(f"MCP_REUSABLE_KG_EMPTY entities={total_entities}")
+                    print(f"MCP_REUSABLE_KG_STATS=PASS ENTITIES={total_entities}")
 
                     kg_query = await wait(
                         session.call_tool(
