@@ -176,10 +176,10 @@ try {
         }
     }
 
-    Write-Host (
+    Write-Host ((
         "GACE_MODULECATALOG_RETENTION=PASS REMOVED={0} DRYRUN={1} KEEP_BACKUPS={2} " +
         "KEEP_PROCESSED={3} KEEP_FAILED={4} KEEP_ACCEPTED={5} CURRENT_COMMIT={6}"
-    ) -f $Removed,[bool]$DryRun,$KeepActivationBackups,$KeepProcessedDeliveries,$KeepFailedDeliveries,$KeepAcceptedSnapshots,$CurrentCommit
+    ) -f $Removed,[bool]$DryRun,$KeepActivationBackups,$KeepProcessedDeliveries,$KeepFailedDeliveries,$KeepAcceptedSnapshots,$CurrentCommit)
 }
 finally {
     if ($null -ne $ReceiveLock) { $ReceiveLock.Dispose(); $ReceiveLock = $null }
