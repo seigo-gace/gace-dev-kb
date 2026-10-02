@@ -254,27 +254,34 @@ receipts\<catalog-commit>.json
 
 ## 14. Continuous receiver
 
-`watch-modulecatalog-kb-inbox-windows.ps1` is a singleton polling receiver with bounded JSONL logging, heartbeat throttling, retry backoff, periodic Current health and periodic retention.
+`watch-modulecatalog-kb-inbox-windows.ps1` is a singleton polling receiver with bounded JSONL logging, heartbeat throttling, retry backoff, two independent Current-health cadences, and periodic retention.
 
 Default cadences:
 
 ```text
-poll                 10 seconds
-retry backoff        60 seconds
-heartbeat           300 seconds
-runtime health      300 seconds
-retention          3600 seconds
+poll                    10 seconds
+retry backoff           60 seconds
+heartbeat              300 seconds
+shallow runtime health 300 seconds
+Deep MCP health      21600 seconds
+retention             3600 seconds
 ```
 
-`configure-modulecatalog-kb-receiver-task-windows.ps1` can register it as a current-user Limited AtLogOn task and persists these operational settings. Task settings include bounded restart attempts for transient startup failures such as delayed F: availability.
+The shallow gate verifies authority/hash/count/index state plus accepted-snapshot → live-runtime byte-exact projection integrity. The Deep gate additionally reopens MCP and exercises repository-history plus reusable BM25 / Vector / Hybrid / KG retrieval. Deep health is deliberately less frequent so ongoing semantic/graph verification is retained without imposing that cost every five minutes.
+
+`configure-modulecatalog-kb-receiver-task-windows.ps1` can register the watcher as a current-user Limited AtLogOn task and persists both health cadences. Task settings include bounded restart attempts for transient startup failures such as delayed F: availability.
+
+Compatibility boundary: when a caller explicitly sets `RuntimeHealthSeconds=0` and does not explicitly supply `DeepRuntimeHealthSeconds`, health is treated as disabled as a whole and Deep is also set to 0. An explicitly supplied Deep value takes precedence and permits deep-only operation.
 
 Repository implementation does not install the task itself. Installation is a separate Master-PC action after the real transported-data runtime gate.
 
 ## 15. Runtime health
 
-`check-modulecatalog-kb-runtime-windows.ps1` verifies marker/receipt/runtime-state authority, formal/reusable/delivery/relationship/case hashes and counts, Current corpus tags, MVS indexed cardinality and known degraded-search warnings.
+`check-modulecatalog-kb-runtime-windows.ps1` verifies marker/receipt/runtime-state authority, formal/reusable/delivery/relationship/case hashes and counts, Current corpus tags, MVS indexed cardinality, known degraded-search warnings, and accepted-snapshot → actual live ModuleCatalog Markdown projection integrity.
 
-`-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP gates.
+For the projection gate, the health checker uses the accepted Current `records/*.md` as source, deterministically reproduces the only activation-time runtime transform — Catalog commit-prefixed filenames plus prefixing of frontmatter `related:` targets — and requires the actual prefixed files in `data\knowledge-search\records` to match by filename set and bytes. Matching counts/status cannot mask silent live Markdown drift.
+
+`-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP gates. The continuous receiver invokes Deep every 21600 seconds by default and records `DEEP_HEALTH_PASS` / `DEEP_HEALTH_FAILED` independently from the normal shallow health event.
 
 Health checks serialize against receive/cutover so they cannot certify a runtime while it is being replaced.
 
@@ -346,17 +353,19 @@ Implemented and GitHub-CI covered on the generalized receive branch:
 - single-Current replacement logic;
 - byte-exact preservation of non-Catalog rich runtime corpus;
 - runtime filename/link alignment;
+- deterministic active ModuleCatalog runtime-corpus hashing;
+- accepted Current snapshot → live prefixed runtime Markdown byte-exact verification;
 - full relationship sidecar graph projection;
 - activation transaction rollback/recovery;
 - receiver/health/retention serialization;
-- continuous receiver retry/backoff/health/retention;
+- continuous receiver retry/backoff/shallow health/periodic Deep MCP health/retention;
 - bounded operational archives/backups;
 - actual Windows Scheduled Task registration/startup/uninstall CI gate;
 - existing BM25/Vector/Hybrid/KG/MCP reusable gates.
 
 Not yet claimed as real-PC PASS:
 
-The generalized transported Catalog snapshot has not yet been genuinely delivered and activated through the installed Master-PC MVS runtime. Scheduled receiver task installation has also not been performed on Master PC.
+The generalized transported Catalog snapshot has not yet been genuinely delivered and activated through the installed Master-PC MVS runtime. Scheduled receiver task installation and its actual periodic shallow/Deep state have also not been verified on Master PC.
 
 Those environment-specific gates remain required before PR #3 can be complete/merge-ready.
 

@@ -393,17 +393,28 @@ An old ACTIVE receipt alone never establishes Current. Marker, receipt and runti
 
 ## Ongoing runtime health
 
-`check-modulecatalog-kb-runtime-windows.ps1` verifies Current authority agreement, formal/reusable/delivery/relationship/case hashes/counts, runtime frontmatter, MVS indexed cardinality and known degraded-search warnings.
+`check-modulecatalog-kb-runtime-windows.ps1` verifies Current authority agreement, formal/reusable/delivery/relationship/case hashes/counts, runtime frontmatter, accepted-snapshot → live-runtime byte-exact ModuleCatalog Markdown projection, MVS indexed cardinality and known degraded-search warnings.
 
-`-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP gates.
+The exact projection gate reconstructs the activation-time runtime transform from the accepted Current `records/*.md`: commit-prefixed filenames plus prefixed frontmatter `related:` targets. The live prefixed filename set and bytes must match exactly, so count/status agreement cannot hide silent runtime Markdown drift.
 
-Normal continuous health is lower-cost/non-Deep and serializes with `receive.lock`.
+`-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP gates after the complete shallow integrity gate.
+
+The continuous receiver uses two independent default cadences while an ACTIVE snapshot exists:
+
+```text
+shallow health  300 seconds
+Deep MCP health 21600 seconds (6 hours)
+```
+
+Deep executions emit `DEEP_HEALTH_PASS` / `DEEP_HEALTH_FAILED`. Health serializes with `receive.lock` so no check can certify a runtime during replacement.
 
 ## Continuous Windows receiver
 
-`watch-modulecatalog-kb-inbox-windows.ps1` polls synchronously with singleton locking, bounded JSONL rotation, heartbeat throttling, retry backoff, periodic Current health and periodic retention.
+`watch-modulecatalog-kb-inbox-windows.ps1` polls synchronously with singleton locking, bounded JSONL rotation, heartbeat throttling, retry backoff, periodic shallow Current health, lower-frequency periodic Deep MCP health and periodic retention.
 
-`configure-modulecatalog-kb-receiver-task-windows.ps1` can register a current-user Limited AtLogOn task with bounded restart attempts. Installer validates executable, persisted arguments, working directory, principal SID, Running state and a fresh watcher STARTED event/service lock.
+`configure-modulecatalog-kb-receiver-task-windows.ps1` can register a current-user Limited AtLogOn task with bounded restart attempts. Installer validates executable, persisted arguments, working directory, principal SID, Running state and a fresh watcher STARTED event/service lock, and persists both health cadences.
+
+Compatibility rule: explicitly setting `RuntimeHealthSeconds=0` without explicitly supplying `DeepRuntimeHealthSeconds` disables health as a whole and therefore persists Deep as 0. An explicit Deep value takes precedence and permits deep-only operation.
 
 Repository implementation does not install that task automatically.
 
@@ -460,10 +471,11 @@ post-cutover MCP PASS on actual Current path
 ACTIVE receipt + marker + runtime-state agree
 processed archive contains ACTIVE receipt + diagnostics
 no unresolved activation transaction
-runtime health PASS
+shallow runtime health PASS including byte-exact live projection
+Deep MCP runtime health PASS
 bounded retention enabled for continuous operation
 no timed-out/orphan receiver process remains active
-continuous receiver/task verified on target PC when installed
+continuous receiver/task shallow+Deep policy verified on target PC when installed
 ```
 
 ## Non-negotiable rule

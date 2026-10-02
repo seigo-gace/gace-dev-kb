@@ -219,7 +219,14 @@ The receive path includes:
 
 ## Continuous Windows receiver
 
-`scripts/watch-modulecatalog-kb-inbox-windows.ps1` is the long-running consumer. It synchronously processes the inbox, periodically checks Current runtime health, applies retry backoff after transient failure, rotates its service JSONL, and runs operational retention.
+`scripts/watch-modulecatalog-kb-inbox-windows.ps1` is the long-running consumer. It synchronously processes the inbox, applies retry backoff after transient failure, rotates its service JSONL, runs operational retention, and performs two independent Current health cadences while an ACTIVE snapshot exists:
+
+```text
+shallow runtime health     300 seconds by default
+Deep MCP runtime health  21600 seconds (6 hours) by default
+```
+
+The shallow gate is low-cost but still fail-closed: it verifies authority/hash/count/index state and deterministically reconstructs the accepted Current snapshot's activation-time filename/link transformation, requiring the actual live ModuleCatalog Markdown projection to match byte-for-byte. The Deep gate additionally reopens MCP and exercises repository-history plus reusable BM25 / Vector / Hybrid / KG retrieval. Deep results are recorded as `DEEP_HEALTH_PASS` / `DEEP_HEALTH_FAILED` service events.
 
 `scripts/configure-modulecatalog-kb-receiver-task-windows.ps1` configures a current-user Limited AtLogOn Scheduled Task:
 
@@ -227,15 +234,15 @@ The receive path includes:
 \G-ACE-KB-ModuleCatalogReceiver
 ```
 
-The task installer verifies persisted executable/arguments/working directory/principal SID and requires a fresh watcher `STARTED` event plus service-lock evidence after startup. Repository code does **not** install the task automatically; Master-PC installation remains an explicit environment action after the real transported-data runtime gate.
+The task installer persists both health cadences and verifies executable/arguments/working directory/principal SID plus a fresh watcher `STARTED` event and service-lock evidence after startup. For compatibility, explicitly setting `RuntimeHealthSeconds=0` without explicitly supplying `DeepRuntimeHealthSeconds` disables health as a whole; an explicit Deep value still supports deep-only operation. Repository code does **not** install the task automatically; Master-PC installation remains an explicit environment action after the real transported-data runtime gate.
 
 ## Runtime health
 
-`scripts/check-modulecatalog-kb-runtime-windows.ps1` validates the active marker, receipt and runtime-state agreement, hashes/cardinalities, relationship/case sidecars, Current corpus, MVS indexed-file count, and known BM25/vector degradation warnings.
+`scripts/check-modulecatalog-kb-runtime-windows.ps1` validates the active marker, receipt and runtime-state agreement, hashes/cardinalities, relationship/case sidecars, Current corpus, MVS indexed-file count, known BM25/vector degradation warnings, and the exact accepted-snapshot → live-runtime Markdown projection.
 
-`-Deep` additionally reruns existing-history and reusable-asset MCP retrieval gates.
+The exact projection gate rebuilds the only allowed activation-time runtime transform in memory — commit-prefixed filenames plus prefixed frontmatter `related:` targets — then requires filename set and file bytes to match the actual live `data\knowledge-search\records` projection. Matching record counts alone cannot hide silent Markdown drift.
 
-The watcher runs the lower-cost non-Deep check periodically when an ACTIVE snapshot exists.
+`-Deep` additionally reruns existing-history and reusable-asset MCP retrieval gates. The watcher runs this Deep gate every 21600 seconds by default, independently of the 300-second shallow gate.
 
 ## Operational retention
 
@@ -302,11 +309,11 @@ feat/reusable-asset-kb-schema-20261001
 
 PR #3 remains Draft and unmerged.
 
-GitHub CI validates deterministic receipt/admission, transport readiness, retry/timeout/archive behavior, activation-journal recovery, runtime-health serialization, receiver service behavior/backoff, bounded retention, rich-corpus preservation, runtime graph projection, importer/replay/tamper gates, existing-Knowledge regression, the real current 80-Asset producer contract, and an actual `windows-latest` Scheduled Task registration/startup/uninstall gate.
+GitHub CI validates deterministic receipt/admission, transport readiness, retry/timeout/archive behavior, activation-journal recovery, runtime-health serialization, receiver service behavior/backoff, bounded retention, rich-corpus preservation, runtime graph projection, deterministic runtime-corpus hashing, accepted-to-live byte-exact runtime projection, periodic Deep-health invocation, importer/replay/tamper gates, existing-Knowledge regression, the real current 80-Asset producer contract, and an actual `windows-latest` Scheduled Task registration/startup/uninstall gate.
 
 ## Remaining environment-specific proof
 
-The only proof that cannot be completed from GitHub alone is the actual installed Master-PC MVS runtime after ModuleCatalog genuinely transports a delivery.
+GitHub source/CI verifies the new runtime-integrity and periodic-Deep behavior, but it cannot substitute for the actual installed Master-PC MVS runtime after ModuleCatalog genuinely transports a delivery.
 
 Required final runtime path:
 
@@ -321,8 +328,9 @@ real Catalog transport
 → post-cutover MCP
 → ACTIVE authority
 → processed archive
+→ byte-exact Current projection health
 → Deep runtime health
-→ receiver Scheduled Task installation/verification when explicitly executed
+→ periodic receiver/Scheduled Task actual-state verification when explicitly executed
 ```
 
 Until that real transported-data Windows gate passes, do not claim the new full reusable-asset pipeline is Master-PC validated and do not merge PR #3 to main.

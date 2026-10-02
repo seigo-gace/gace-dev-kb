@@ -247,7 +247,18 @@ The journal is removed only after successful finalization or completed rollback.
 
 `watch-modulecatalog-kb-inbox-windows.ps1` is the continuous consumer. One activation finishes before another delivery is considered.
 
-The watcher also performs automatic Current health checks whenever an ACTIVE marker exists. `RuntimeHealthSeconds` defaults to 300 seconds. Normal continuous checks are intentionally non-Deep to reduce idle cost; Deep MCP verification is already mandatory during activation and remains available manually.
+The watcher performs two independent Current-health cadences whenever an ACTIVE marker exists:
+
+```text
+RuntimeHealthSeconds      = 300   # shallow health, default 5 minutes
+DeepRuntimeHealthSeconds  = 21600 # Deep MCP health, default 6 hours
+```
+
+The shallow gate is intentionally lower cost, but it is not count-only. It verifies Current authority/hashes/cardinalities/index warnings and accepted-snapshot → actual live ModuleCatalog Markdown byte-exact projection integrity.
+
+The Deep gate invokes the same health script with `-Deep`, reopening MCP and exercising repository-history plus reusable BM25 / Vector / Hybrid / KG retrieval. Successful/failed Deep executions are emitted as `DEEP_HEALTH_PASS` / `DEEP_HEALTH_FAILED` service events. A Deep PASS also refreshes the shallow-health timestamp because it includes the shallow gate first.
+
+Compatibility behavior is explicit: when the Scheduled Task configurator receives `RuntimeHealthSeconds=0` and `DeepRuntimeHealthSeconds` was not explicitly supplied, health is treated as disabled as a whole and Deep is also set to 0. Supplying an explicit Deep value overrides that compatibility behavior and permits deep-only operation.
 
 Service events are stored at:
 
@@ -269,7 +280,7 @@ as the current user, Limited, AtLogOn.
 
 Installer verification covers executable, complete arguments, working directory, principal SID, Running state, receiver service lock and a fresh watcher `STARTED` event. Existing running task instances are stopped before replacement so stale command-line settings are not silently retained through `MultipleInstances=IgnoreNew`.
 
-The task also carries health/retention cadence and retention limits into the watcher and configures bounded restart attempts for transient startup failure.
+The task carries shallow health, Deep health, retention cadence and retention limits into the watcher and configures bounded restart attempts for transient startup failure.
 
 Repository code does **not** install the task automatically. Master-PC installation remains an explicit environment action after the genuine transported-data runtime gate.
 
@@ -318,12 +329,25 @@ reusable records/metadata hashes
 relationship/case hashes + counts
 delivery manifest hash
 Current corpus counts/runtime tags
+accepted-snapshot → live-runtime byte-exact ModuleCatalog Markdown projection
 MVS indexed-file cardinality
 absence of known BM25/vector degraded-mode warnings
 no unresolved activation journal
 ```
 
-`-Deep` reruns repository-history plus reusable MCP BM25/Vector/Hybrid/KG gates.
+The exact projection check uses `scripts/verify_modulecatalog_runtime_projection.py`. Its source is the accepted Current reusable `records/*.md`. It deterministically reproduces the only activation-time live transform:
+
+```text
+original accepted filename
+→ accepted-modulecatalog-reusable-<commit12>-<filename>
+
+frontmatter related: <target.md>
+→ related: accepted-modulecatalog-reusable-<commit12>-<target.md>
+```
+
+It requires the live prefixed filename set and each file's bytes to match exactly. `scripts/runtime_corpus_integrity.py` supplies deterministic sorted filename/size/SHA-256 manifesting and aggregate SHA-256 support. Missing/extra files, wrong count, empty matching set or content drift fail closed even if MVS still reports the expected indexed-file count.
+
+`-Deep` reruns repository-history plus reusable MCP BM25/Vector/Hybrid/KG gates after the complete shallow integrity gate.
 
 ## 17. Manual commands
 
@@ -391,8 +415,9 @@ post-cutover MCP PASS on actual Current path
 ACTIVE receipt + marker + runtime-state agreement
 processed archive contains ACTIVE receipt + receiver diagnostics
 no unresolved activation transaction
-Current runtime health PASS
-continuous receiver configuration verified on the target PC
+Current runtime shallow health PASS including byte-exact live projection
+Deep MCP runtime health PASS
+continuous receiver shallow/Deep configuration verified on the target PC when installed
 bounded operational retention enabled
 no timed-out/orphan receiver process remains active
 ```

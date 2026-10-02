@@ -38,6 +38,8 @@ gace-dev-kb/
 │  ├─ enrich_modulecatalog_search_corpus.py
 │  ├─ copy_preserved_kb_runtime_corpus.py
 │  ├─ prefix_modulecatalog_runtime_links.py
+│  ├─ runtime_corpus_integrity.py
+│  ├─ verify_modulecatalog_runtime_projection.py
 │  ├─ replace_modulecatalog_reusable_snapshot.py
 │  ├─ receive-modulecatalog-kbdata-windows.ps1
 │  ├─ process-modulecatalog-inbox-windows.ps1
@@ -71,6 +73,7 @@ gace-dev-kb/
 │  ├─ test_enrich_modulecatalog_search_corpus.py
 │  ├─ test_copy_preserved_kb_runtime_corpus.py
 │  ├─ test_prefix_modulecatalog_runtime_links.py
+│  ├─ test_runtime_corpus_integrity.py
 │  ├─ test_modulecatalog_inbox_lifecycle.ps1
 │  ├─ test_modulecatalog_transport_readiness.ps1
 │  ├─ test_modulecatalog_receiver_timeout.ps1
@@ -89,7 +92,7 @@ gace-dev-kb/
 Mandatory entry point. Separates the historical Master-PC validated baseline from the generalized transported-asset receive/runtime status.
 
 ### `docs/CURRENT_DESIGN.md`
-Current design baseline. Defines producer/consumer authority, single-Current runtime, projection v2, transport lifecycle, activation/rollback, continuous receiver, health and retention boundaries.
+Current design baseline. Defines producer/consumer authority, single-Current runtime, projection v2, transport lifecycle, activation/rollback, continuous receiver, shallow/Deep health and retention boundaries.
 
 ### `docs/DESIGN_DELTA.md`
 Historical design-change record. Do not rewrite older evidence merely because the current design moved forward.
@@ -98,7 +101,7 @@ Historical design-change record. Do not rewrite older evidence merely because th
 Detailed `gace.reusable-asset.v1` consumer contract: data semantics, admission, runtime projection, Current authority and completion definition.
 
 ### `docs/MODULECATALOG_KB_INTAKE_RUNTIME.md`
-Operational Windows receive-to-runtime specification: inbox lifecycle, locks, timeout/retry, receiver service, activation transaction, graph projection, health and retention commands.
+Operational Windows receive-to-runtime specification: inbox lifecycle, locks, timeout/retry, receiver service, activation transaction, graph projection, byte-exact runtime projection health, periodic Deep MCP health and retention commands.
 
 ### `docs/MODULECATALOG_KB_RETENTION.md`
 Bounded operational backup/archive policy. Defines protected Current/rollback authority, retention counts, safe-root deletion boundaries and dry-run behavior.
@@ -157,6 +160,12 @@ Copies the existing non-Catalog runtime corpus into staging without degrading ri
 ### `scripts/prefix_modulecatalog_runtime_links.py`
 Rewrites runtime-only `related:` targets after Catalog filename prefixing so MVS KG links resolve in the staged/current corpus.
 
+### `scripts/runtime_corpus_integrity.py`
+Builds a deterministic manifest of the actual active prefixed ModuleCatalog Markdown corpus using sorted filename, byte size and SHA-256 entries plus a canonical aggregate SHA-256. It fails closed on empty/wrong-count projections.
+
+### `scripts/verify_modulecatalog_runtime_projection.py`
+Reconstructs the allowed accepted-snapshot → live-runtime transform in memory — commit-prefixed filenames plus prefixed frontmatter `related:` targets — and requires the actual live ModuleCatalog Markdown files to match the expected filename set and bytes exactly.
+
 ### `scripts/replace_modulecatalog_reusable_snapshot.py`
 Builds the next formal record set while keeping one Current ModuleCatalog reusable snapshot and preserving non-Catalog knowledge.
 
@@ -173,16 +182,16 @@ Uses the existing BM25/Vector/KG/MCP runtime to build staging, run regressions, 
 Resolves an interrupted PREPARED activation transaction before another activation proceeds.
 
 ### `scripts/check-modulecatalog-kb-runtime-windows.ps1`
-Non-mutating Current integrity/health gate. `-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP checks.
+Non-mutating Current integrity/health gate. In addition to authority/hash/count/index checks, it invokes the accepted-to-live projection verifier so silent live Markdown drift fails shallow health. `-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP checks.
 
 ### `scripts/prune-modulecatalog-kb-retention-windows.ps1`
 Serialized operational cleanup. Bounds rollback/search backups and processed/failed/accepted archives while protecting Current and immediate rollback authority and refusing deletion outside approved data roots.
 
 ### `scripts/watch-modulecatalog-kb-inbox-windows.ps1`
-Continuous singleton inbox consumer with heartbeat/failure JSONL, bounded rotation, retry backoff, periodic Current health and periodic retention.
+Continuous singleton inbox consumer with heartbeat/failure JSONL, bounded rotation, retry backoff, shallow Current health (default 300 seconds), Deep MCP health (default 21600 seconds / 6 hours) and periodic retention.
 
 ### `scripts/configure-modulecatalog-kb-receiver-task-windows.ps1`
-Windows Scheduled Task installer source. Registers a current-user Limited AtLogOn receiver with persisted health/retention policy and bounded restart behavior. Repository presence does not mean the Master-PC task is installed.
+Windows Scheduled Task installer source. Registers a current-user Limited AtLogOn receiver with persisted shallow/Deep health cadences, retention policy and bounded restart behavior. Explicit `RuntimeHealthSeconds=0` without an explicit Deep value disables both health cadences for compatibility. Repository presence does not mean the Master-PC task is installed.
 
 ## Producer compatibility helpers — not operational receive path
 
@@ -222,10 +231,10 @@ Hard-interruption PREPARED transaction recovery tests.
 Verifies runtime health/receive lock ownership and inherited-lock mode.
 
 ### `tests/test_modulecatalog_receiver_service.ps1`
-Continuous receiver one-shot/singleton/log-rotation/health behavior.
+Continuous receiver one-shot/singleton/log-rotation/health behavior, including actual Deep-health invocation/event coverage.
 
 ### `tests/test_modulecatalog_receiver_backoff.ps1`
-Proves a transient polling failure backs off before the next attempt instead of hot-looping.
+Proves a transient polling failure backs off before the next attempt instead of hot-looping and explicitly disables both shallow/Deep health in the isolated fixture.
 
 ### `tests/test_modulecatalog_retention.ps1`
 Proves bounded operational retention, stale scratch cleanup, idempotency, Current protection and immediate reusable rollback protection including older ACTIVE-marker schema.
@@ -234,14 +243,15 @@ Proves bounded operational retention, stale scratch cleanup, idempotency, Curren
 
 - `tests/test_enrich_modulecatalog_search_corpus.py` — frontmatter, dependency/containment/cross-unit/full-sidecar relationship projection.
 - `tests/test_copy_preserved_kb_runtime_corpus.py` — non-Catalog rich-corpus preservation.
-- `tests/test_prefix_modulecatalog_runtime_links.py` — runtime link target alignment.
+- `tests/test_prefix_modulecatalog_runtime_links.py` — runtime link target alignment plus accepted-snapshot → live-prefixed projection exact-match/tamper detection.
+- `tests/test_runtime_corpus_integrity.py` — deterministic active runtime manifest, drift, wrong-count and empty-projection failures.
 - `tests/test_replace_modulecatalog_reusable_snapshot.py` — single-Current record replacement and legacy transition.
 - `tests/test_import_modulecatalog_reusable_export.py` / `tests/test_import_reusable_asset_bundle.py` — actual/generic contract import gates.
 
 ## Workflow
 
 ### `.github/workflows/reusable-asset-kb-verify.yml`
-Feature-branch CI. Covers syntax, transport/inbox reliability, activation recovery, receiver service/backoff/retention, projection/search regressions, legacy KB regressions, pinned real ModuleCatalog producer compatibility, and an actual Windows Scheduled Task installation/startup/uninstall gate.
+Feature-branch CI. Covers Python/Node/PowerShell syntax, transport/inbox reliability, activation recovery, receiver service/backoff/retention, rich-corpus preservation, deterministic runtime-corpus integrity, accepted-to-live exact runtime projection, projection/search regressions, periodic Deep-health behavior, legacy KB regressions, pinned real ModuleCatalog producer compatibility, and an actual Windows Scheduled Task installation/startup/uninstall gate.
 
 CI is not a substitute for the final genuine-transport Master-PC MVS runtime gate.
 
