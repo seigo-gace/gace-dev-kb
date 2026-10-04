@@ -201,3 +201,7 @@ Local-only evidence intentionally left untouched:
 - the pre-existing local `scripts/__pycache__/` remains untracked.
 
 The first-version repository knowledge reuse E2E and the measured Windows quality-hardening boundary are closed. Knowledge-data processing/admission from TGserver remains a separate development scope.
+
+## Preserved-baseline change history — 2026-10-05
+
+The previously future TGserver integration boundary now has an explicit source admission adapter and PC activity producer. It reuses the initial record/export/corpus contract and existing OSS index/MCP rather than replacing them. Original baseline and historical Windows validation above are preserved. See `DESIGN_DELTA.md` and `TGSERVER_ADMISSION.md` for the accepted difference and current limits. Actual PC/TGserver/MCP knowledge integration remains NOT_VERIFIED.

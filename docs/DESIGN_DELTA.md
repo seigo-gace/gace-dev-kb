@@ -530,3 +530,15 @@ Execution at `e76bcb32bb6244af57d9b2c0e9af3eed515454c5` produced:
 The measured Windows quality-hardening boundary is closed. The repository now retains full reachable Git history by default, proves persisted BM25 evidence directly, and validates real MCP retrieval independently of CLI presentation behavior. Local untracked `.gitignore` and pre-existing `scripts/__pycache__/` remain intentionally untouched.
 
 Knowledge-data processing/admission from TGserver is a separate development scope and is not added here.
+
+## 2026-10-05 — Explicit TGserver evidence admission and PC event outbox
+
+Baseline difference: extend the former future TGserver integration boundary with an explicit candidate admission adapter and KB activity producer. Preserve the initial KnowledgeRecord fields, existing Git adapter/full-history corpus and MVS/MCP engine. Do not store raw logs as knowledge.
+
+Reason: Task authorizes evidence-backed knowledge promotion and a unified Producer -> Gateway -> TGserver route. Admission requires raw correlation, actual Git identity/commit/test blobs, real exact-revision GitHub CI readback and explicit reusable knowledge fields. Producer reuses the identical TGserver stdlib outbox; no new search/MCP subsystem is built. A measured combiner gap is closed by rejecting different evidence under the same repository/commit/type key instead of silently discarding it.
+
+Evidence: standard-library Git/admission/privacy/renderer/conflict tests and real HTTP/SQLite retry/reopen tests. PC F: runtime, actual promoted knowledge index/MCP and second-project reuse are not verified by these local tests. ZERO mapping for gace-dev-kb is absent and remains a blocker; no P number is inferred.
+
+Applying commit: feature-branch implementation commit touching this Delta and `scripts/promote_tgserver_knowledge.py`; exact revision is retained by Git/PR.
+
+Compatibility/rollback: existing Git export/render/MVS/MCP behavior is retained; admission/PC emission are explicit commands and can be disabled without dropping pending outbox/canonical knowledge. Generated data stay outside Git. No model download, secret registration, shared registry write, provider change, main merge or production deploy is performed.

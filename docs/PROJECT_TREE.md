@@ -139,3 +139,15 @@ repository full history
 The first-version repository knowledge reuse E2E and the measured Windows quality-hardening gates are closed. TGserver-linked knowledge processing/admission remains intentionally separate work.
 
 Do not create placeholder subsystems solely to make the tree look complete.
+
+## Explicit TGserver integration extension
+
+- `scripts/promote_tgserver_knowledge.py`: fail-closed explicit candidate admission with raw/Git/CI provenance into the existing record contract.
+- `scripts/devlog_producer.py`: identical TGserver-owned stdlib redacted Gateway outbox consumer copy.
+- `scripts/emit_development_event.py`: actual Git identity/HEAD -> PC KB event capture.
+- `tests/test_promote_tgserver_knowledge.py`: admission/evidence/privacy/renderer tests.
+- `tests/test_devlog_producer.py`: immutable SQLite recovery and actual HTTP retry tests.
+- `.github/workflows/ci.yml`: source adapter/producer regression gates.
+- `docs/TGSERVER_ADMISSION.md`: source integration, mapping, retention and verification contract.
+
+This extends the earlier future boundary at Source level only. Actual PC/TGserver/MCP/cross-Project knowledge E2E remains a separate gate.
