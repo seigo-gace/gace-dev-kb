@@ -43,13 +43,15 @@ def combine(paths: list[Path]) -> list[dict[str, str]]:
         raise ValueError("at least two knowledge-record inputs are required")
 
     combined: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str, str], dict[str, str]] = {}
     for path in paths:
         for record in load_file(path):
             key = (record["repository"], record["commit"], record["type"])
             if key in seen:
+                if seen[key] != record:
+                    raise ValueError("conflicting knowledge evidence for repository/commit/type")
                 continue
-            seen.add(key)
+            seen[key] = record
             combined.append(record)
 
     repositories = {record["repository"] for record in combined}

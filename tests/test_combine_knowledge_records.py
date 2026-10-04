@@ -76,6 +76,16 @@ class CombineKnowledgeRecordsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required keys"):
             module.combine([one, two])
 
+    def test_conflicting_admission_is_not_silently_discarded(self) -> None:
+        one = self.root / "one.jsonl"
+        two = self.root / "two.jsonl"
+        original = record("org/one", "aaa")
+        changed = {**original, "cause": "different admitted evidence"}
+        write_jsonl(one, [original])
+        write_jsonl(two, [changed, record("org/two", "bbb")])
+        with self.assertRaisesRegex(ValueError, "conflicting knowledge evidence"):
+            module.combine([one, two])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

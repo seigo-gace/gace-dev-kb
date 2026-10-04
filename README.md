@@ -196,3 +196,9 @@ Local-only evidence intentionally left untouched:
 - the pre-existing local `scripts/__pycache__/` remains untracked.
 
 The first-version repository knowledge reuse E2E and the measured Windows quality-hardening boundary are complete. Knowledge-data processing/admission from TGserver is intentionally outside this repository's current scope and will be developed separately before integration.
+
+## Explicit TGserver integration Source
+
+The feature branch adds an explicit evidence-gated `KNOWLEDGE_CANDIDATE` admission adapter and a PC activity producer using the identical TGserver durable Gateway outbox. The existing record shape, full-history Git adapter, renderer and MVS/MCP engine are reused. See [integration contract](docs/TGSERVER_ADMISSION.md) and [Design Delta](docs/DESIGN_DELTA.md).
+
+Local admission/privacy/renderer/conflict and HTTP/SQLite retry/reopen tests pass. Real TGserver admission, PC indexing, MCP retrieval of promoted knowledge and second-Project reuse remain NOT_VERIFIED. The current ZERO registry has no gace-dev-kb mapping; no P number/topic/secret/provider resource is created by this Source work. Historical Windows engine validation above is preserved and is separate from these new integration gates.
