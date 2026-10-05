@@ -131,3 +131,9 @@ finally {
     if ($null -ne $Held) { $Held.Dispose() }
     Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# Expected child health failures above deliberately set LASTEXITCODE non-zero.
+# All assertions have passed at this point, so do not leak that expected state as
+# the test process result on Windows PowerShell 5.1.
+$global:LASTEXITCODE = 0
+Write-Host 'MODULECATALOG_RUNTIME_HEALTH_TEST=PASS'
