@@ -8,8 +8,17 @@ $HealthSource = Get-Content $HealthScript -Raw
 if ($HealthSource -match 'Get-Content\s+\$file\.FullName\s+-TotalCount\s+\d+\s+-Raw') {
     throw 'HEALTH_GET_CONTENT_INCOMPATIBLE_TOTALCOUNT_RAW_PRESENT'
 }
-if ($HealthSource -notmatch '\$head\s*=\s*\(Get-Content\s+\$file\.FullName\s+-TotalCount\s+16\)\s+-join\s+"`n"') {
-    throw 'HEALTH_FRONTMATTER_READ_COMPATIBILITY_GUARD_MISSING'
+if ($HealthSource -match 'Get-Content\s+\$file\.FullName\s+-TotalCount\s+\d+') {
+    throw 'HEALTH_FRONTMATTER_FIXED_LINE_LIMIT_PRESENT'
+}
+if ($HealthSource -notmatch 'function\s+Get-MarkdownFrontmatter') {
+    throw 'HEALTH_FRONTMATTER_READER_MISSING'
+}
+if ($HealthSource -notmatch 'RUNTIME_REUSABLE_FRONTMATTER_UNTERMINATED') {
+    throw 'HEALTH_FRONTMATTER_TERMINATOR_GATE_MISSING'
+}
+if ($HealthSource -notmatch '\(\?m\)\^\\s\*\-\\s\*"gace-reusable-asset"\\s\*\$') {
+    throw 'HEALTH_EXACT_REUSABLE_TAG_GATE_MISSING'
 }
 
 $Root = Join-Path ([System.IO.Path]::GetTempPath()) ("gace-health-lock-" + [Guid]::NewGuid().ToString('N'))
