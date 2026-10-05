@@ -59,16 +59,22 @@ function Invoke-MvsStatus {
     $stderr = Join-Path $env:TEMP "gace-runtime-health-$tag.stderr.log"
     $process = $null
     try {
-        $process = Start-Process -FilePath $Mvs -ArgumentList @('status') -WorkingDirectory $CurrentSearch -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        # Windows PowerShell can lose Process.ExitCode when Start-Process uses
+        # -NoNewWindow. Keep the process hidden without that switch so the
+        # fail-closed exit-code gate remains reliable on the Master PC runtime.
+        $process = Start-Process -FilePath $Mvs -ArgumentList @('status') -WorkingDirectory $CurrentSearch -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         if (-not $process.WaitForExit(180000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             throw 'RUNTIME_MVS_STATUS_TIMEOUT=180s'
         }
+        $process.WaitForExit()
         $process.Refresh()
+        $exitCode = $process.ExitCode
         [string]$out = if (Test-Path $stdout) { Get-Content $stdout -Raw } else { '' }
         [string]$err = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { '' }
         [string]$all = ($out + [Environment]::NewLine + $err).Trim()
-        if ($process.ExitCode -ne 0) { throw "RUNTIME_MVS_STATUS_FAILED=$($process.ExitCode) OUTPUT=$all" }
+        if ($null -eq $exitCode) { throw "RUNTIME_MVS_STATUS_EXIT_CODE_MISSING OUTPUT=$all" }
+        if ([int]$exitCode -ne 0) { throw "RUNTIME_MVS_STATUS_FAILED=$exitCode OUTPUT=$all" }
         return $all
     }
     finally {
