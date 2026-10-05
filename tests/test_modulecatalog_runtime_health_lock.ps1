@@ -55,8 +55,14 @@ function Invoke-HiddenExitCodeProbe {
     }
 }
 
-Invoke-HiddenExitCodeProbe -Expected 0
-Invoke-HiddenExitCodeProbe -Expected 7
+if ($env:OS -eq 'Windows_NT') {
+    Invoke-HiddenExitCodeProbe -Expected 0
+    Invoke-HiddenExitCodeProbe -Expected 7
+    Write-Host 'MODULECATALOG_RUNTIME_HEALTH_EXITCODE_PROBE=PASS OS=WINDOWS'
+}
+else {
+    Write-Host 'MODULECATALOG_RUNTIME_HEALTH_EXITCODE_PROBE=SKIP OS=NON_WINDOWS'
+}
 
 $Root = Join-Path ([System.IO.Path]::GetTempPath()) ("gace-health-lock-" + [Guid]::NewGuid().ToString('N'))
 $Intake = Join-Path $Root 'data\knowledge-intake\modulecatalog'
@@ -86,7 +92,7 @@ try {
     if ($internal -notmatch 'RUNTIME_REQUIRED_PATH_MISSING=') { throw "HEALTH_INHERITED_LOCK_WRONG_FAILURE=$internal" }
     if (-not (Test-Path $LockPath)) { throw 'HEALTH_INHERITED_CHECK_REMOVED_RECEIVER_LOCK' }
 
-    Write-Host "MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS OWNED_GATE=PASS INHERITED_GATE=PASS EXITCODE_PROBE=PASS HOST=$HostExe"
+    Write-Host "MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS OWNED_GATE=PASS INHERITED_GATE=PASS HOST=$HostExe"
 }
 finally {
     if ($null -ne $Held) { $Held.Dispose() }
