@@ -54,32 +54,39 @@ function Get-MarkdownFrontmatter {
     }
 }
 function Invoke-MvsStatus {
-    $tag = [Guid]::NewGuid().ToString('N')
-    $stdout = Join-Path $env:TEMP "gace-runtime-health-$tag.stdout.log"
-    $stderr = Join-Path $env:TEMP "gace-runtime-health-$tag.stderr.log"
-    $process = $null
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $Mvs
+    $startInfo.Arguments = 'status'
+    $startInfo.WorkingDirectory = $CurrentSearch
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $stdoutTask = $null
+    $stderrTask = $null
     try {
-        # Windows PowerShell can lose Process.ExitCode when Start-Process uses
-        # -NoNewWindow. Keep the process hidden without that switch so the
-        # fail-closed exit-code gate remains reliable on the Master PC runtime.
-        $process = Start-Process -FilePath $Mvs -ArgumentList @('status') -WorkingDirectory $CurrentSearch -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if (-not $process.Start()) { throw 'RUNTIME_MVS_STATUS_START_FAILED' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit(180000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            try { $process.Kill() } catch {}
             throw 'RUNTIME_MVS_STATUS_TIMEOUT=180s'
         }
         $process.WaitForExit()
-        $process.Refresh()
-        $exitCode = $process.ExitCode
-        [string]$out = if (Test-Path $stdout) { Get-Content $stdout -Raw } else { '' }
-        [string]$err = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { '' }
+        [string]$out = $stdoutTask.Result
+        [string]$err = $stderrTask.Result
         [string]$all = ($out + [Environment]::NewLine + $err).Trim()
-        if ($null -eq $exitCode) { throw "RUNTIME_MVS_STATUS_EXIT_CODE_MISSING OUTPUT=$all" }
+        $exitCode = $process.ExitCode
         if ([int]$exitCode -ne 0) { throw "RUNTIME_MVS_STATUS_FAILED=$exitCode OUTPUT=$all" }
         return $all
     }
     finally {
-        if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-        Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            if (-not $process.HasExited) { try { $process.Kill() } catch {} }
+            $process.Dispose()
+        }
     }
 }
 
