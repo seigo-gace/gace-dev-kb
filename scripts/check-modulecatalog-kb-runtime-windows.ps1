@@ -29,6 +29,30 @@ $RuntimeProjectionVerifier = Join-Path $Repo 'scripts\verify_modulecatalog_runti
 $ReceiptsRoot = Join-Path $IntakeRoot 'receipts'
 
 function Get-Sha256 { param([string]$Path) return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash }
+function Get-MarkdownFrontmatter {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $name = [System.IO.Path]::GetFileName($Path)
+    $reader = [System.IO.StreamReader]::new($Path, [System.Text.Encoding]::UTF8, $true)
+    try {
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        $first = $reader.ReadLine()
+        if ($first -ne '---') { throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$name" }
+        $lines.Add($first)
+        $closed = $false
+        $lineCount = 1
+        while (($line = $reader.ReadLine()) -ne $null) {
+            $lineCount += 1
+            if ($lineCount -gt 4096) { throw "RUNTIME_REUSABLE_FRONTMATTER_TOO_LARGE=$name" }
+            $lines.Add($line)
+            if ($line -eq '---') { $closed = $true; break }
+        }
+        if (-not $closed) { throw "RUNTIME_REUSABLE_FRONTMATTER_UNTERMINATED=$name" }
+        return [string]::Join("`n", $lines)
+    }
+    finally {
+        $reader.Dispose()
+    }
+}
 function Invoke-MvsStatus {
     $tag = [Guid]::NewGuid().ToString('N')
     $stdout = Join-Path $env:TEMP "gace-runtime-health-$tag.stdout.log"
@@ -126,9 +150,8 @@ try {
     if ($RelationshipCount -ne $ExpectedRelationships) { throw "RUNTIME_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationships actual=$RelationshipCount" }
     if ($CaseCount -ne $ExpectedCases) { throw "RUNTIME_CASE_COUNT_MISMATCH expected=$ExpectedCases actual=$CaseCount" }
     foreach ($file in $ReusableCorpusFiles) {
-        $head = (Get-Content $file.FullName -TotalCount 16) -join "`n"
-        if (-not $head.StartsWith("---`n") -and -not $head.StartsWith("---`r`n")) { throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$($file.Name)" }
-        if ($head -notmatch 'gace-reusable-asset') { throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)" }
+        $frontmatter = Get-MarkdownFrontmatter -Path $file.FullName
+        if ($frontmatter -notmatch '(?m)^\s*-\s*"gace-reusable-asset"\s*$') { throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)" }
     }
 
     # The live MVS corpus is not an archive copy: filenames are commit-prefixed
