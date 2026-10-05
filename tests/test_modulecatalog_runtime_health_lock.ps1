@@ -20,45 +20,57 @@ if ($HealthSource -notmatch 'RUNTIME_REUSABLE_FRONTMATTER_UNTERMINATED') {
 if ($HealthSource -notmatch '\(\?m\)\^\\s\*\-\\s\*"gace-reusable-asset"\\s\*\$') {
     throw 'HEALTH_EXACT_REUSABLE_TAG_GATE_MISSING'
 }
-if ($HealthSource -match 'Start-Process[^\r\n]+-NoNewWindow') {
-    throw 'HEALTH_MVS_STATUS_NONEWWINDOW_EXITCODE_HAZARD_PRESENT'
+if ($HealthSource -match 'Start-Process') {
+    throw 'HEALTH_MVS_STATUS_START_PROCESS_PRESENT'
 }
-if ($HealthSource -notmatch 'Start-Process[^\r\n]+-WindowStyle\s+Hidden') {
-    throw 'HEALTH_MVS_STATUS_HIDDEN_PROCESS_GATE_MISSING'
+if ($HealthSource -notmatch 'System\.Diagnostics\.ProcessStartInfo') {
+    throw 'HEALTH_MVS_STATUS_PROCESSSTARTINFO_MISSING'
 }
-if ($HealthSource -notmatch 'RUNTIME_MVS_STATUS_EXIT_CODE_MISSING') {
-    throw 'HEALTH_MVS_STATUS_EXITCODE_NULL_GATE_MISSING'
+if ($HealthSource -notmatch 'CreateNoWindow\s*=\s*\$true') {
+    throw 'HEALTH_MVS_STATUS_CREATE_NO_WINDOW_MISSING'
+}
+if ($HealthSource -notmatch 'RedirectStandardOutput\s*=\s*\$true' -or $HealthSource -notmatch 'RedirectStandardError\s*=\s*\$true') {
+    throw 'HEALTH_MVS_STATUS_REDIRECT_GATE_MISSING'
 }
 
-function Invoke-HiddenExitCodeProbe {
+function Invoke-ProcessStartInfoExitCodeProbe {
     param([Parameter(Mandatory=$true)][int]$Expected)
     if (-not $env:ComSpec -or -not (Test-Path $env:ComSpec)) { throw "COMSPEC_MISSING=$env:ComSpec" }
-    $tag = [Guid]::NewGuid().ToString('N')
-    $stdout = Join-Path $env:TEMP "gace-exitcode-$tag.stdout.log"
-    $stderr = Join-Path $env:TEMP "gace-exitcode-$tag.stderr.log"
-    $process = $null
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $env:ComSpec
+    $startInfo.Arguments = "/d /c exit $Expected"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
     try {
-        $process = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d','/c',"exit $Expected") -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if (-not $process.Start()) { throw "PROCESSSTARTINFO_PROBE_START_FAILED=$Expected" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit(30000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            throw "HIDDEN_EXITCODE_PROBE_TIMEOUT=$Expected"
+            try { $process.Kill() } catch {}
+            throw "PROCESSSTARTINFO_PROBE_TIMEOUT=$Expected"
         }
         $process.WaitForExit()
-        $process.Refresh()
+        [void]$stdoutTask.Result
+        [void]$stderrTask.Result
         $actual = $process.ExitCode
-        if ($null -eq $actual) { throw "HIDDEN_EXITCODE_PROBE_NULL=$Expected" }
-        if ([int]$actual -ne $Expected) { throw "HIDDEN_EXITCODE_PROBE_MISMATCH expected=$Expected actual=$actual" }
+        if ([int]$actual -ne $Expected) { throw "PROCESSSTARTINFO_PROBE_MISMATCH expected=$Expected actual=$actual" }
     }
     finally {
-        if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-        Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            if (-not $process.HasExited) { try { $process.Kill() } catch {} }
+            $process.Dispose()
+        }
     }
 }
 
 if ($env:OS -eq 'Windows_NT') {
-    Invoke-HiddenExitCodeProbe -Expected 0
-    Invoke-HiddenExitCodeProbe -Expected 7
-    Write-Host 'MODULECATALOG_RUNTIME_HEALTH_EXITCODE_PROBE=PASS OS=WINDOWS'
+    Invoke-ProcessStartInfoExitCodeProbe -Expected 0
+    Invoke-ProcessStartInfoExitCodeProbe -Expected 7
+    Write-Host 'MODULECATALOG_RUNTIME_HEALTH_EXITCODE_PROBE=PASS OS=WINDOWS MODE=PROCESSSTARTINFO'
 }
 else {
     Write-Host 'MODULECATALOG_RUNTIME_HEALTH_EXITCODE_PROBE=SKIP OS=NON_WINDOWS'
