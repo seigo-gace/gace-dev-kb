@@ -126,7 +126,7 @@ try {
     if ($RelationshipCount -ne $ExpectedRelationships) { throw "RUNTIME_RELATIONSHIP_COUNT_MISMATCH expected=$ExpectedRelationships actual=$RelationshipCount" }
     if ($CaseCount -ne $ExpectedCases) { throw "RUNTIME_CASE_COUNT_MISMATCH expected=$ExpectedCases actual=$CaseCount" }
     foreach ($file in $ReusableCorpusFiles) {
-        $head = Get-Content $file.FullName -TotalCount 16 -Raw
+        $head = (Get-Content $file.FullName -TotalCount 16) -join "`n"
         if (-not $head.StartsWith("---`n") -and -not $head.StartsWith("---`r`n")) { throw "RUNTIME_REUSABLE_FRONTMATTER_MISSING=$($file.Name)" }
         if ($head -notmatch 'gace-reusable-asset') { throw "RUNTIME_REUSABLE_KG_TAG_MISSING=$($file.Name)" }
     }
