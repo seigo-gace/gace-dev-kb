@@ -20,6 +20,43 @@ if ($HealthSource -notmatch 'RUNTIME_REUSABLE_FRONTMATTER_UNTERMINATED') {
 if ($HealthSource -notmatch '\(\?m\)\^\\s\*\-\\s\*"gace-reusable-asset"\\s\*\$') {
     throw 'HEALTH_EXACT_REUSABLE_TAG_GATE_MISSING'
 }
+if ($HealthSource -match 'Start-Process[^\r\n]+-NoNewWindow') {
+    throw 'HEALTH_MVS_STATUS_NONEWWINDOW_EXITCODE_HAZARD_PRESENT'
+}
+if ($HealthSource -notmatch 'Start-Process[^\r\n]+-WindowStyle\s+Hidden') {
+    throw 'HEALTH_MVS_STATUS_HIDDEN_PROCESS_GATE_MISSING'
+}
+if ($HealthSource -notmatch 'RUNTIME_MVS_STATUS_EXIT_CODE_MISSING') {
+    throw 'HEALTH_MVS_STATUS_EXITCODE_NULL_GATE_MISSING'
+}
+
+function Invoke-HiddenExitCodeProbe {
+    param([Parameter(Mandatory=$true)][int]$Expected)
+    if (-not $env:ComSpec -or -not (Test-Path $env:ComSpec)) { throw "COMSPEC_MISSING=$env:ComSpec" }
+    $tag = [Guid]::NewGuid().ToString('N')
+    $stdout = Join-Path $env:TEMP "gace-exitcode-$tag.stdout.log"
+    $stderr = Join-Path $env:TEMP "gace-exitcode-$tag.stderr.log"
+    $process = $null
+    try {
+        $process = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d','/c',"exit $Expected") -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if (-not $process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "HIDDEN_EXITCODE_PROBE_TIMEOUT=$Expected"
+        }
+        $process.WaitForExit()
+        $process.Refresh()
+        $actual = $process.ExitCode
+        if ($null -eq $actual) { throw "HIDDEN_EXITCODE_PROBE_NULL=$Expected" }
+        if ([int]$actual -ne $Expected) { throw "HIDDEN_EXITCODE_PROBE_MISMATCH expected=$Expected actual=$actual" }
+    }
+    finally {
+        if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Invoke-HiddenExitCodeProbe -Expected 0
+Invoke-HiddenExitCodeProbe -Expected 7
 
 $Root = Join-Path ([System.IO.Path]::GetTempPath()) ("gace-health-lock-" + [Guid]::NewGuid().ToString('N'))
 $Intake = Join-Path $Root 'data\knowledge-intake\modulecatalog'
@@ -49,7 +86,7 @@ try {
     if ($internal -notmatch 'RUNTIME_REQUIRED_PATH_MISSING=') { throw "HEALTH_INHERITED_LOCK_WRONG_FAILURE=$internal" }
     if (-not (Test-Path $LockPath)) { throw 'HEALTH_INHERITED_CHECK_REMOVED_RECEIVER_LOCK' }
 
-    Write-Host "MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS OWNED_GATE=PASS INHERITED_GATE=PASS HOST=$HostExe"
+    Write-Host "MODULECATALOG_RUNTIME_HEALTH_LOCK=PASS OWNED_GATE=PASS INHERITED_GATE=PASS EXITCODE_PROBE=PASS HOST=$HostExe"
 }
 finally {
     if ($null -ne $Held) { $Held.Dispose() }
