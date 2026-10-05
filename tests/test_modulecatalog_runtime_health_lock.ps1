@@ -4,6 +4,14 @@ $Repo = Split-Path -Parent $PSScriptRoot
 $HealthScript = Join-Path $Repo 'scripts\check-modulecatalog-kb-runtime-windows.ps1'
 if (-not (Test-Path $HealthScript)) { throw "HEALTH_SCRIPT_MISSING=$HealthScript" }
 
+$HealthSource = Get-Content $HealthScript -Raw
+if ($HealthSource -match 'Get-Content\s+\$file\.FullName\s+-TotalCount\s+\d+\s+-Raw') {
+    throw 'HEALTH_GET_CONTENT_INCOMPATIBLE_TOTALCOUNT_RAW_PRESENT'
+}
+if ($HealthSource -notmatch '\$head\s*=\s*\(Get-Content\s+\$file\.FullName\s+-TotalCount\s+16\)\s+-join\s+"`n"') {
+    throw 'HEALTH_FRONTMATTER_READ_COMPATIBILITY_GUARD_MISSING'
+}
+
 $Root = Join-Path ([System.IO.Path]::GetTempPath()) ("gace-health-lock-" + [Guid]::NewGuid().ToString('N'))
 $Intake = Join-Path $Root 'data\knowledge-intake\modulecatalog'
 $LockPath = Join-Path $Intake 'receive.lock'
