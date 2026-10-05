@@ -84,12 +84,32 @@ New-Item -ItemType Directory -Path $Intake -Force | Out-Null
 $HostExe = (Get-Process -Id $PID).Path
 if (-not $HostExe -or -not (Test-Path $HostExe)) { throw "CURRENT_POWERSHELL_HOST_MISSING=$HostExe" }
 
+function Invoke-ExpectedFailingHealthChild {
+    param([switch]$AssumeReceiveLockHeld)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($AssumeReceiveLockHeld) {
+            $text = (& $HostExe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root -AssumeReceiveLockHeld 2>&1 | Out-String)
+        }
+        else {
+            $text = (& $HostExe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root 2>&1 | Out-String)
+        }
+        $code = $LASTEXITCODE
+        return [pscustomobject]@{ Output = $text; ExitCode = $code }
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
 $Held = $null
 try {
     $Held = [System.IO.File]::Open($LockPath,[System.IO.FileMode]::OpenOrCreate,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None)
 
-    $output = (& $HostExe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root 2>&1 | Out-String)
-    $code = $LASTEXITCODE
+    $externalResult = Invoke-ExpectedFailingHealthChild
+    $output = [string]$externalResult.Output
+    $code = [int]$externalResult.ExitCode
     if ($code -eq 0) { throw "HEALTH_LOCK_GATE_FALSE_PASS OUTPUT=$output" }
     if ($output -notmatch 'RUNTIME_RECEIVER_BUSY=') { throw "HEALTH_LOCK_GATE_WRONG_ERROR EXIT=$code OUTPUT=$output" }
     if (-not (Test-Path $LockPath)) { throw 'HEALTH_EXTERNAL_CHECK_REMOVED_FOREIGN_LOCK' }
@@ -97,8 +117,9 @@ try {
     # Internal receiver mode must reuse the already-held lock instead of deadlocking
     # against itself. This fixture intentionally lacks runtime files, so the expected
     # failure moves past locking and reaches the required-path gate.
-    $internal = (& $HostExe -NoProfile -ExecutionPolicy Bypass -File $HealthScript -Root $Root -AssumeReceiveLockHeld 2>&1 | Out-String)
-    $internalCode = $LASTEXITCODE
+    $internalResult = Invoke-ExpectedFailingHealthChild -AssumeReceiveLockHeld
+    $internal = [string]$internalResult.Output
+    $internalCode = [int]$internalResult.ExitCode
     if ($internalCode -eq 0) { throw "HEALTH_INHERITED_LOCK_FALSE_PASS OUTPUT=$internal" }
     if ($internal -match 'RUNTIME_RECEIVER_BUSY=') { throw "HEALTH_INHERITED_LOCK_SELF_DEADLOCK=$internal" }
     if ($internal -notmatch 'RUNTIME_REQUIRED_PATH_MISSING=') { throw "HEALTH_INHERITED_LOCK_WRONG_FAILURE=$internal" }
