@@ -16,7 +16,7 @@ from pathlib import Path
 SCHEMA_REQUEST = "gace.kb.chat-request.v1"
 SCHEMA_RESULT = "gace.kb.chat-result.v1"
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 ALLOWED_MODES = {"bm25", "vector", "hybrid"}
 WINDOWS_SAFE_ENV = {
     "MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING": "1",
