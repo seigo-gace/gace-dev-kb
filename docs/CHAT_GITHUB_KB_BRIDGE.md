@@ -33,6 +33,35 @@ implement here
 
 Do not move an unverified design into the shared GitHub Project as if it were a completed common capability.
 
+## Shared cross-repository contract
+
+The bridge is a single shared capability. Any G-ACE repository CHAT may submit a request to the same control branch. Caller repositories do not install their own watcher, MCP runtime, KB, or search index.
+
+Optional caller-attribution fields are preserved in the result:
+
+- `requester_repository`: GitHub `owner/repository` identity.
+- `requester_project`: human/project control-plane name.
+- `requester_change_unit`: bounded current work identifier.
+
+These fields are audit metadata only. They cannot select an executable, command, path, MCP tool, Git ref, runtime, or output location.
+
+Example:
+
+```json
+{
+  "schema_version": "gace.kb.chat-request.v1",
+  "request_id": "req-debugai-reuse-001",
+  "action": "search",
+  "query": "approval routing reusable logic",
+  "mode": "hybrid",
+  "limit": 10,
+  "requested_by": "gpt-chat",
+  "requester_repository": "seigo-gace/debug-ai",
+  "requester_project": "DebugAI",
+  "requester_change_unit": "shared-kb-reuse-proof"
+}
+```
+
 ## Control-plane contract
 
 Dedicated branch:

@@ -27,16 +27,32 @@ class ChatKbBridgeTests(unittest.TestCase):
                 "mode": "hybrid",
                 "limit": 7,
                 "requested_by": "gpt-chat",
+                "requester_repository": "seigo-gace/modular-catalog",
+                "requester_project": "Catalog",
+                "requester_change_unit": "cross-repo-kb-reuse",
             }
         )
         self.assertEqual(value["mode"], "hybrid")
         self.assertEqual(value["limit"], 7)
+        self.assertEqual(value["requester_repository"], "seigo-gace/modular-catalog")
+        self.assertEqual(value["requester_project"], "Catalog")
+        self.assertEqual(value["requester_change_unit"], "cross-repo-kb-reuse")
         with self.assertRaisesRegex(RuntimeError, "BRIDGE_ACTION_INVALID"):
             bridge.validate_request(
                 {
                     "schema_version": "gace.kb.chat-request.v1",
                     "request_id": "req-test-bad-001",
                     "action": "shell",
+                }
+            )
+        with self.assertRaisesRegex(RuntimeError, "BRIDGE_REQUESTER_REPOSITORY_INVALID"):
+            bridge.validate_request(
+                {
+                    "schema_version": "gace.kb.chat-request.v1",
+                    "request_id": "req-test-bad-repo-001",
+                    "action": "search",
+                    "query": "x",
+                    "requester_repository": "../unsafe",
                 }
             )
         with self.assertRaisesRegex(RuntimeError, "BRIDGE_SEARCH_LIMIT_INVALID"):
@@ -50,6 +66,23 @@ class ChatKbBridgeTests(unittest.TestCase):
                     "limit": 500,
                 }
             )
+
+    def test_result_echoes_requester_context(self):
+        request = bridge.validate_request(
+            {
+                "schema_version": "gace.kb.chat-request.v1",
+                "request_id": "req-test-context-001",
+                "action": "search",
+                "query": "reuse",
+                "requester_repository": "seigo-gace/debug-ai",
+                "requester_project": "DebugAI",
+                "requester_change_unit": "shared-kb-proof",
+            }
+        )
+        result = bridge.result_envelope(request, "PASS", payload={"ok": True})
+        self.assertEqual(result["requester_repository"], "seigo-gace/debug-ai")
+        self.assertEqual(result["requester_project"], "DebugAI")
+        self.assertEqual(result["requester_change_unit"], "shared-kb-proof")
 
     def test_exact_returns_metadata_relationships_and_cases(self):
         with tempfile.TemporaryDirectory() as tmp:
