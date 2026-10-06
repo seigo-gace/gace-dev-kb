@@ -1,0 +1,23 @@
+name: Atomic JSON Windows Regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/reusable-asset-kb-schema-20261001
+
+permissions:
+  contents: read
+
+jobs:
+  atomic-json-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Existing receipt atomic replacement on Windows PowerShell
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\test_modulecatalog_atomic_json_windows.ps1

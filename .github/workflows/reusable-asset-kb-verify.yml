@@ -1,0 +1,281 @@
+name: Reusable Asset KB Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/reusable-asset-kb-schema-20261001
+
+permissions:
+  contents: read
+
+jobs:
+  reusable-asset-kb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Python syntax gates
+        run: |
+          python -m py_compile \
+            scripts/import_modulecatalog_reusable_export.py \
+            scripts/import_reusable_asset_bundle.py \
+            scripts/replace_modulecatalog_reusable_snapshot.py \
+            scripts/copy_preserved_kb_runtime_corpus.py \
+            scripts/enrich_modulecatalog_search_corpus.py \
+            scripts/prefix_modulecatalog_runtime_links.py \
+            scripts/runtime_corpus_integrity.py \
+            scripts/verify_modulecatalog_runtime_projection.py \
+            scripts/accept_modulecatalog_delivery.py \
+            tests/mcp_reusable_asset_e2e.py \
+            tests/test_accept_modulecatalog_delivery.py \
+            tests/test_copy_preserved_kb_runtime_corpus.py \
+            tests/test_enrich_modulecatalog_search_corpus.py \
+            tests/test_prefix_modulecatalog_runtime_links.py \
+            tests/test_runtime_corpus_integrity.py
+
+      - name: Node syntax gate
+        run: node --check scripts/run_modulecatalog_reusable_export.mjs
+
+      - name: PowerShell syntax gates
+        shell: pwsh
+        run: |
+          $files = @(
+            'scripts/test-modulecatalog-reusable-export-windows.ps1',
+            'scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1',
+            'scripts/activate-modulecatalog-accepted-windows.ps1',
+            'scripts/recover-modulecatalog-activation-windows.ps1',
+            'scripts/receive-modulecatalog-kbdata-windows.ps1',
+            'scripts/process-modulecatalog-inbox-windows.ps1',
+            'scripts/watch-modulecatalog-kb-inbox-windows.ps1',
+            'scripts/configure-modulecatalog-kb-receiver-task-windows.ps1',
+            'scripts/check-modulecatalog-kb-runtime-windows.ps1',
+            'scripts/prune-modulecatalog-kb-retention-windows.ps1',
+            'tests/test_modulecatalog_inbox_lifecycle.ps1',
+            'tests/test_modulecatalog_transport_readiness.ps1',
+            'tests/test_modulecatalog_receiver_timeout.ps1',
+            'tests/test_modulecatalog_duplicate_delivery_archive.ps1',
+            'tests/test_modulecatalog_activation_recovery.ps1',
+            'tests/test_modulecatalog_runtime_health_lock.ps1',
+            'tests/test_modulecatalog_receiver_service.ps1',
+            'tests/test_modulecatalog_receiver_backoff.ps1',
+            'tests/test_modulecatalog_retention.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              throw "POWERSHELL_PARSE_FAILED=$file"
+            }
+            Write-Host "POWERSHELL_PARSE=PASS FILE=$file"
+          }
+
+      - name: Inbox lifecycle and crash recovery
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_inbox_lifecycle.ps1
+
+      - name: Transport readiness and partial-copy safety
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_transport_readiness.ps1
+
+      - name: Receiver timeout recovery
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_timeout.ps1
+
+      - name: Duplicate delivery archive replay
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_duplicate_delivery_archive.ps1
+
+      - name: Activation journal recovery
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_activation_recovery.ps1
+
+      - name: Runtime health serialization
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_runtime_health_lock.ps1
+
+      - name: Receiver service one-shot path
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_service.ps1
+
+      - name: Continuous receiver retry backoff
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_receiver_backoff.ps1
+
+      - name: Operational retention bounds
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_modulecatalog_retention.ps1
+
+      - name: Preserve non-Catalog rich runtime corpus
+        run: python -B tests/test_copy_preserved_kb_runtime_corpus.py
+
+      - name: Search corpus KG relation projection tests
+        run: python -B tests/test_enrich_modulecatalog_search_corpus.py
+
+      - name: Runtime corpus integrity tests
+        run: python -B tests/test_runtime_corpus_integrity.py
+
+      - name: Runtime KG link and accepted-to-live projection tests
+        run: python -B tests/test_prefix_modulecatalog_runtime_links.py
+
+      - name: Reusable export importer fixture tests
+        run: python -B tests/test_import_modulecatalog_reusable_export.py
+
+      - name: Delivery acceptance boundary tests
+        run: python -B tests/test_accept_modulecatalog_delivery.py
+
+      - name: Reusable active snapshot replacement tests
+        run: python -B tests/test_replace_modulecatalog_reusable_snapshot.py
+
+      - name: Generic reusable bundle compatibility tests
+        run: python -B tests/test_import_reusable_asset_bundle.py
+
+      - name: Existing knowledge regression tests
+        run: |
+          python -B tests/test_combine_knowledge_records.py
+          python -B tests/test_render_knowledge_corpus.py
+          python -B tests/test_gace_knowledge_adapter.py
+          python -B tests/test_import_verified_modulecatalog_skills.py
+
+      - name: Real ModuleCatalog delivery acceptance contract
+        env:
+          MODULECATALOG_COMMIT: 224d96615d4cd3a4c87ca0de581d6124a871a3fd
+        run: |
+          set -euo pipefail
+          git clone https://github.com/seigo-gace/modular-catalog.git /tmp/modular-catalog
+          git -C /tmp/modular-catalog checkout --detach "$MODULECATALOG_COMMIT"
+          node scripts/run_modulecatalog_reusable_export.mjs \
+            --catalog-root /tmp/modular-catalog \
+            --output-root /tmp/modulecatalog-export \
+            --catalog-commit "$MODULECATALOG_COMMIT" \
+            --expected-asset-count 80
+          python -B scripts/accept_modulecatalog_delivery.py \
+            --delivery-root /tmp/modulecatalog-export \
+            --accepted-root /tmp/gace-accepted/$MODULECATALOG_COMMIT \
+            --receipt /tmp/gace-receipts/$MODULECATALOG_COMMIT.json
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          commit = os.environ['MODULECATALOG_COMMIT']
+          root = Path('/tmp/gace-accepted') / commit
+          projection = root / 'projection'
+          state = json.loads((root / 'state.json').read_text())
+          metadata = [json.loads(line) for line in (projection / 'knowledge-metadata.jsonl').read_text().splitlines() if line.strip()]
+          records = [line for line in (projection / 'knowledge-records.jsonl').read_text().splitlines() if line.strip()]
+          relationships = [json.loads(line) for line in (projection / 'relationships.jsonl').read_text().splitlines() if line.strip()]
+          cases = [json.loads(line) for line in (projection / 'cases.jsonl').read_text().splitlines() if line.strip()]
+          corpus = list((projection / 'records').glob('*.md'))
+          receipt = json.loads((Path('/tmp/gace-receipts') / f'{commit}.json').read_text())
+          assert state['status'] == 'ACCEPTED'
+          assert receipt['status'] == 'ACCEPTED'
+          assert state['projectionSchemaVersion'] == 2
+          assert receipt['projectionSchemaVersion'] == 2
+          assert state['assetCount'] == 80
+          assert state['knowledgeUnitCount'] == 720
+          assert state['caseCount'] == 160
+          assert state['relationshipCount'] >= 720
+          assert state['corpusRuntimeEnrichment'] == 'mvs-4.1.14-frontmatter-v1'
+          assert len(metadata) == 720
+          assert len(records) == 720
+          assert len(relationships) == state['relationshipCount']
+          assert len(cases) == 160
+          assert len(corpus) == 720
+          assert sha(projection / 'relationships.jsonl') == state['relationshipsSha256'] == receipt['relationshipsSha256']
+          assert sha(projection / 'cases.jsonl') == state['casesSha256'] == receipt['casesSha256']
+          assert all(path.read_text().startswith('---\n') for path in corpus)
+          assert all('"gace-reusable-asset"' in path.read_text() for path in corpus)
+          assert len({row['parent_asset_id'] for row in metadata}) == 80
+          kinds = {row['knowledge_kind'] for row in metadata}
+          required = {'discovery','documentation','design','logic','architecture','evidence','code','test_case'}
+          assert required <= kinds, sorted(kinds)
+          assert all(row['verification']['status'] == 'verified' for row in metadata)
+          assert all(row['_gace']['commit'] == commit for row in metadata)
+          assert all('identity' in row and 'integrity' in row and 'files' in row['integrity'] for row in metadata)
+          dependency_tagged = sum('depends-on-' in path.read_text() for path in corpus)
+          relation_tagged = sum('relation-' in path.read_text() for path in corpus)
+          print(
+              'REAL_MODULECATALOG_DELIVERY_ACCEPTANCE=PASS '
+              f'ASSETS=80 RECORDS=720 RELATIONSHIPS={len(relationships)} CASES=160 '
+              f'KINDS={len(kinds)} DEPENDENCY_TAGGED_DOCS={dependency_tagged} '
+              f'RELATION_TAGGED_DOCS={relation_tagged} IDENTITY_INTEGRITY=PASS KG_READY=YES'
+          )
+          PY
+
+  windows-receiver-task:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Exercise Scheduled Task installer on Windows PowerShell
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Root = Join-Path $env:RUNNER_TEMP ('gace-task-' + [Guid]::NewGuid().ToString('N'))
+          $Repo = Join-Path $Root 'repo'
+          $Scripts = Join-Path $Repo 'scripts'
+          $Python = (Get-Command python.exe -ErrorAction Stop).Source
+          New-Item -ItemType Directory -Path $Scripts -Force | Out-Null
+          Copy-Item 'scripts\watch-modulecatalog-kb-inbox-windows.ps1' (Join-Path $Scripts 'watch-modulecatalog-kb-inbox-windows.ps1') -Force
+
+          $MockProcessor = @'
+          param([string]$Root,[string]$Python)
+          Start-Sleep -Seconds 2
+          Write-Host 'WINDOWS_TASK_MOCK_PROCESSOR=PASS'
+          exit 0
+          '@
+          [System.IO.File]::WriteAllText(
+            (Join-Path $Scripts 'process-modulecatalog-inbox-windows.ps1'),
+            $MockProcessor,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          try {
+            & .\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 `
+              -Root $Root `
+              -Python $Python `
+              -PollSeconds 1 `
+              -RetryBackoffSeconds 1 `
+              -HeartbeatSeconds 5 `
+              -RuntimeHealthSeconds 0 `
+              -DeepRuntimeHealthSeconds 0 `
+              -RetentionSeconds 0 `
+              -StartupVerifySeconds 30
+
+            $Task = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction Stop
+            if ($Task.State -ne 'Running') { throw "WINDOWS_RECEIVER_TASK_NOT_RUNNING=$($Task.State)" }
+            $Log = Join-Path $Root 'data\knowledge-intake\modulecatalog\receiver-service.jsonl'
+            $Lock = Join-Path $Root 'data\knowledge-intake\modulecatalog\receiver-service.lock'
+            if (-not (Test-Path $Log) -or -not (Test-Path $Lock)) { throw 'WINDOWS_RECEIVER_TASK_RUNTIME_EVIDENCE_MISSING' }
+            $Events = @(Get-Content $Log | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+            if (@($Events | Where-Object { $_.status -eq 'STARTED' }).Count -lt 1) { throw 'WINDOWS_RECEIVER_TASK_STARTED_EVENT_MISSING' }
+            Write-Host 'GACE_MODULECATALOG_WINDOWS_TASK_E2E=PASS STARTUP=VERIFIED'
+          }
+          finally {
+            & .\scripts\configure-modulecatalog-kb-receiver-task-windows.ps1 -Root $Root -Python $Python -Uninstall
+            Start-Sleep -Seconds 1
+            $Remaining = Get-ScheduledTask -TaskPath '\' -TaskName 'G-ACE-KB-ModuleCatalogReceiver' -ErrorAction SilentlyContinue
+            if ($null -ne $Remaining) { throw 'WINDOWS_RECEIVER_TASK_UNINSTALL_FAILED' }
+            Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue
+          }

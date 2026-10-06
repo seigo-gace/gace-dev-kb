@@ -2,251 +2,375 @@
 
 ## 1. Purpose
 
-G-ACE Dev KB reuses knowledge produced by repository development so later development does not need to recreate the same implementation, repeat the same investigation, or repeat known failures.
+G-ACE Dev KB is the runtime/search layer for reusing development knowledge and reusable development assets across G-ACE work.
 
-The repository remains the development source of truth for repository-derived records. The formal KB may also admit explicitly registered external reusable assets when their exact repository/commit, manifest, evidence boundary, record count, and source identity are validated. The KB is a downstream reuse/search layer, not a replacement authority.
+Reusable scope is not Skill-only. It includes repository history, code, logic, architecture, design, contracts, capabilities, tests/cases, evidence, patterns, workflows, configuration, integration/remediation knowledge, and future reusable asset kinds.
 
-## 2. Repository-centered development loop
+Authority is source-specific:
+
+- committed repository evidence remains authoritative for repository-derived history;
+- ModuleCatalog is authoritative for Catalog reusable-asset content through verified/search-ready KBData generation and transport;
+- G-ACE KB owns receipt onward and never silently upgrades runtime-derived data into producer canonical truth.
+
+## 2. Mandatory development routine
 
 ```text
 README
-  ↓
-Current Design / Project Tree / Design Delta
-  ↓
-Implementation
-  ↓
-Test / Debug / Validation
-  ↓
-Commit = work/change record
-  ↓
-Documentation Gate
-  ↓
-Completion Gate
-  ↓
-Knowledge ingestion
-  ↓
-Search / MCP reuse in later repository development
+→ Current Design / Project Tree / relevant Design Delta
+→ implementation
+→ test / debug / validation
+→ commit
+→ documentation gate
+→ completion gate
 ```
 
-README is the mandatory entry point for development. It must link directly to the current design, project tree, design delta, and relevant system documents so an AI or developer does not have to rediscover them.
+Design is a baseline. Intentional design changes require a Design Delta; file/responsibility changes require Project Tree updates; validated current capability belongs in README/system documentation.
 
-## 3. Design authority rules
+## 3. Existing runtime strategy
 
-- Design is a baseline, not a disposable description of whatever the current code happens to be.
-- Do not silently overwrite design to match implementation drift.
-- When implementation intentionally differs from the design, record what changed, why it changed, and the applying commit in `DESIGN_DELTA.md`.
-- Completed and validated current capability is reflected in README.
-- File additions, removals, moves, and major responsibility changes require a Project Tree update.
-- Work is not complete while a required README / Tree / Delta / system-document update remains undone.
-
-## 4. Knowledge scope
-
-The first useful version must preserve and retrieve reusable implementation, design and decision rationale, successful outcomes, failures and failure reasons, root causes, fixes, tests and validation results, and commit/evidence references.
-
-The initial record shape stays intentionally small:
-
-- `type`
-- `repository`
-- `commit`
-- `summary`
-- `cause`
-- `fix`
-- `validation`
-- `source`
-
-Do not create separate subsystems for each knowledge type unless a measured need requires it.
-
-## 5. Implementation strategy
-
-Shortest-path rule:
-
-1. Use one suitable OSS core first.
-2. Reuse OSS capabilities instead of rebuilding generic storage, indexing, search, or MCP functionality.
-3. Migrate only valuable G-ACE-specific parts from the former KB System.
-4. Add only the missing G-ACE repository/knowledge adapter logic.
-5. Add another dependency only after a real measured gap is confirmed.
-
-`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. Repository-managed Windows compatibility, deterministic full-history repository-to-record adaptation, generated knowledge-corpus indexing, persisted BM25 retention validation, real MCP stdio client retrieval, cross-repository reuse, and verified external-skill admission into the formal KB have passed on the Master Windows environment.
-
-## 6. G-ACE repository / knowledge adapter boundary
+`mcp-vector-search` 4.1.14 is the active OSS search/index/MCP core. G-ACE does not build a second generic search engine or second Knowledge Graph for ModuleCatalog data.
 
 ```text
-Git repository / committed evidence
-  ↓
-G-ACE Knowledge Adapter
-  ↓
-initial knowledge record
-  ↓
-JSONL projection outside Git source
-  ↓
-optional deterministic combine
-  ↓
-Markdown knowledge corpus
-  ↓
-dedicated mcp-vector-search knowledge index
-  ↓
-persisted BM25 + vector index
-  ↓
-MCP stdio server
-  ↓
-AI/MCP client retrieval
+Markdown corpus
+→ BM25
+→ Vector semantic search
+→ Hybrid search
+→ Knowledge Graph
+→ MCP stdio
+→ AI/MCP client retrieval
 ```
 
-Adapter and retrieval rules:
+Repository-managed Windows compatibility covers measured upstream/runtime gaps and is verified before formal indexing.
 
-- Git remains authority for repository-derived records; the adapter only projects committed evidence.
-- Generic MCP/search capability stays in `mcp-vector-search`; do not build a second MCP server for the adapter.
-- Record generation must be deterministic and must not invent missing cause, fix, validation, or source evidence.
-- Explicit commit-body markers (`Cause:`, `Fix:`, `Validation:`, `Source:`) may populate the corresponding fields.
-- When a field is not supported by committed evidence, it remains empty rather than being synthesized.
-- Modified or staged tracked files block normal export so uncommitted work is not represented as durable knowledge.
-- Untracked local-only files do not block export.
-- Durable export defaults to all commits reachable from the requested revision. A positive `--max-count` is explicit bounded behavior for tests or temporary workflows; it must not silently evict older durable knowledge.
-- Formal promotion pins repository-derived knowledge to an explicit revision; the current default is `origin/main`, preventing feature-branch work from becoming formal knowledge before merge.
-- Generated JSONL, rendered corpus, MVS config, and MVS index stay outside repository source.
-- Multi-source combining preserves the same initial contract and deduplicates only identical `repository + commit + type + source` identities. Distinct reusable assets at the same repository/commit/type remain distinct records.
-- Searchability is implemented by rendering one Markdown document per knowledge record rather than mutating the initial record contract to fit the OSS parser.
-- Windows compatibility is verified before generated-knowledge indexing and MCP execution; the pinned runtime may be repaired by the repository-managed compatibility layer and then reverified.
-- Persisted BM25 retention is validated below the CLI display layer by loading the BM25 index directly, querying a known full commit ID, resolving the returned chunk through LanceDB, and confirming the actual indexed evidence.
-- MCP validation requires real initialize/server-info/list-tools/tool-call exchange over stdio and return of known records.
-- Cross-repository validation requires at least two distinct repository identities in the combined corpus and successful MCP retrieval of a known record from each.
+## 4. Legacy eight-field Knowledge Record
 
-## 6A. Verified external source admission boundary
-
-The formal KB may admit a verified external asset only through the explicit accepted-source registry. This is a narrow deterministic path, not a generic semantic admission engine.
-
-Current flow:
+The original common record contract remains:
 
 ```text
-config/accepted-knowledge-sources.json
-  ↓
-exact repository + commit + asset id + expected count
-  ↓
-canonical Git checkout bytes
-  ↓
-manifest SHA-256/size verification
-  ↓
-normal/user evidence must both pass
-  ↓
-exported function count verification
-  ↓
-one 8-field knowledge record per exported skill
-  ↓
-combine with pinned repository-derived records
-  ↓
-formal-kb.jsonl
-  ↓
-formal corpus/index
-  ↓
-real MCP retrieval gates
+type
+repository
+commit
+summary
+cause
+fix
+validation
+source
+```
+
+This is a compatibility/search envelope only. Rich reusable-asset data must not be truncated to it. Unsupported `cause`/`fix` remain empty rather than fabricated.
+
+## 5. Repository-derived knowledge path
+
+```text
+Git committed evidence
+→ gace_knowledge_adapter.py
+→ eight-field records
+→ deterministic Markdown
+→ formal KB runtime
+→ BM25 / Vector / KG / MCP
 ```
 
 Rules:
 
-- admission must be explicitly `verified` in the registry;
-- source repository and commit are immutable inputs to one promotion run;
-- on Windows, accepted source checkouts use `core.autocrlf=false` and a forced checkout/reset so manifest verification operates on canonical Git bytes rather than CRLF-transformed working-tree bytes;
-- the manifest must use SHA-256 and required files must be present, size-correct, and hash-correct;
-- evidence sections `normal` and `user` must explicitly report `passed=true`;
-- the expected exported skill count must match the real exports;
-- one exported function becomes one knowledge record with a distinct exact `source` identity;
-- the evidence boundary is preserved literally. Admission never upgrades a source from “verified in local Skill Engine/repository tests” to “verified in real DebugAI LLM A/B” unless that evidence exists;
-- generated accepted-source material remains outside Git under `F:\G-ACE-KB\data\knowledge-sources\accepted`;
-- generic TGserver intake, semantic scoring, duplicate adjudication, supersession, and AI-assisted admission remain outside this implemented boundary.
+- committed Git evidence is authority;
+- missing evidence stays empty;
+- tracked dirty state blocks normal durable export;
+- durable export defaults to full reachable history;
+- formal repository knowledge is pinned to an explicit revision;
+- generated data/indexes stay outside Git source.
 
-## 7. Runtime / storage boundary
+## 6. Previously validated formal baseline
 
-Local durable layout:
+Before the generalized Catalog receive path, Master Windows validated:
 
 ```text
-F:\G-ACE-KB
-├─ repo\
+repository records: 94
+verified external records: 13
+formal records: 107
+formal corpus/index: 107/107
+MCP repository-history retrieval: PASS
+MCP all-13 reusable retrieval: PASS
+natural reusable discovery: PASS
+```
+
+This is historical/pre-full-Catalog runtime evidence. The generalized ModuleCatalog snapshot replaces the legacy 13-record Catalog snapshot when genuinely transported data is activated; it does not retain both as simultaneous Current Catalog versions.
+
+## 7. ModuleCatalog producer / KB consumer boundary
+
+ModuleCatalog responsibility:
+
+```text
+Reusable Asset creation
+→ verification
+→ Canonical / Derived boundary
+→ search-ready gace.reusable-asset.v1 KBData
+→ integrity manifests
+→ transport to Master PC KB boundary
+```
+
+G-ACE KB responsibility:
+
+```text
+transported delivery receipt
+→ transport-completeness preflight
+→ full fail-closed admission
+→ projection schema v2
+→ existing BM25 / Vector / KG staging runtime
+→ existing-history + reusable MCP gates
+→ single-Current snapshot replacement
+→ transaction-journaled cutover / rollback
+→ post-cutover MCP verification
+→ ACTIVE marker / receipt / runtime-state
+→ processed archive
+→ ongoing runtime health
+→ bounded operational retention
+```
+
+The operational receive path never clones/fetches ModuleCatalog and never runs the producer exporter to manufacture its own payload. Cross-repository producer execution in CI is contract verification only.
+
+## 8. Transport contract
+
+Accepted format:
+
+```text
+gace.reusable-asset.v1
+```
+
+Layout:
+
+```text
+<delivery>/
+├─ manifest.json
+└─ assets\<asset-id>\
+   ├─ asset.json
+   ├─ knowledge-units.jsonl
+   ├─ relationships.jsonl
+   ├─ cases.jsonl
+   └─ manifest.json
+```
+
+Default receive lifecycle:
+
+```text
+F:\G-ACE-KB\data\knowledge-inbox\modulecatalog\
+├─ ready\
+├─ processing\
+├─ processed\
+└─ failed\
+```
+
+A top-level manifest alone does not prove copy completion. Before claim, the processor checks declared Asset directories/manifests and listed file availability/declared byte size. Partial transport remains pending. Unsafe rooted/traversal paths are never followed by preflight.
+
+Full cryptographic/schema/provenance checks remain authoritative after claim.
+
+## 9. Reusable projection schema v2
+
+Accepted data is projected locally into:
+
+```text
+knowledge-records.jsonl       # compatibility envelope
+knowledge-metadata.jsonl      # full structured reusable metadata
+relationships.jsonl           # structured producer relationships
+cases.jsonl                   # structured reusable/test cases
+records/*.md                  # existing MVS runtime search projection
+```
+
+Every searchable Knowledge Unit keeps parent Asset identity and exact Catalog commit/source provenance.
+
+Canonical transport data is not modified. Runtime-only frontmatter/tags/related links are generated only in the derived Markdown projection.
+
+## 10. Search and Knowledge Graph use
+
+Reusable data is not merely stored. Activation must prove use through the existing runtime:
+
+```text
+all Knowledge Units exact BM25 retrieval
+representative each Knowledge Kind via BM25 / Vector / Hybrid
+Case ID retrieval
+Relationship ID retrieval
+KG reusable-data tag query
+KG relation/dependency/containment projection when producer relations exist
+existing repository-history retrieval regression
+post-cutover retrieval from actual Current runtime path
+```
+
+The runtime projection consults the full accepted `relationships.jsonl` sidecar as well as per-unit embedded relations. Asset-level future producer relationships therefore remain eligible for deterministic tag/link projection instead of being silently lost because an importer did not yet know that relation kind.
+
+Structured relationship/case sidecars survive into Current independently of the MVS projection and are hash/count checked during acceptance, activation and health.
+
+## 11. Single-Current snapshot rule
+
+Normal runtime search has one Current ModuleCatalog reusable snapshot.
+
+A new accepted snapshot replaces the prior Catalog snapshot while preserving repository-history and non-Catalog Knowledge. Historic Catalog snapshots remain evidence/rollback material rather than coexisting normal search candidates.
+
+Until producer transport includes explicit sequence/predecessor authority, multiple complete `ready` deliveries are rejected rather than ordered by directory name, filesystem time or Git commit timestamp.
+
+## 12. Receive reliability
+
+Locks:
+
+```text
+receiver-service.lock
+processor.lock
+receive.lock
+```
+
+They serialize watcher, claim/archive, and admission/index/cutover/health/retention respectively.
+
+Operational failure handling:
+
+- exactly one stranded `processing` delivery resumes;
+- permanent failure archives under `failed` with machine-readable evidence and receiver logs;
+- transient busy/health/timeout remains `RETRYABLE` in processing;
+- ACTIVE-but-not-archived remains `ACTIVE_ARCHIVE_PENDING`;
+- duplicate delivery ID replay preserves prior processed archive and uses a unique replay archive;
+- receiver timeout is bounded (default 7200 seconds);
+- Windows timeout kills the complete receiver process tree to prevent orphan MVS/Python mutation after timeout.
+
+## 13. Atomic activation and crash recovery
+
+Before destructive Current cutover, activation writes a durable PREPARED journal:
+
+```text
+F:\G-ACE-KB\data\knowledge-intake\modulecatalog\activation-transaction.json
+```
+
+The journal records all Current/backup/staging paths needed for deterministic recovery.
+
+Recovery occurs before another activation:
+
+- if marker + receipt + runtime-state prove the target already ACTIVE, finalize the committed transaction;
+- otherwise restore the prior fully-known Current from backups;
+- missing recovery authority fails closed.
+
+Current authority requires agreement between:
+
+```text
+modulecatalog-reusable-active.json
+current reusable runtime-state.json
+receipts\<catalog-commit>.json
+```
+
+## 14. Continuous receiver
+
+`watch-modulecatalog-kb-inbox-windows.ps1` is a singleton polling receiver with bounded JSONL logging, heartbeat throttling, retry backoff, two independent Current-health cadences, and periodic retention.
+
+Default cadences:
+
+```text
+poll                    10 seconds
+retry backoff           60 seconds
+heartbeat              300 seconds
+shallow runtime health 300 seconds
+Deep MCP health      21600 seconds
+retention             3600 seconds
+```
+
+The shallow gate verifies authority/hash/count/index state plus accepted-snapshot → live-runtime byte-exact projection integrity. The Deep gate additionally reopens MCP and exercises repository-history plus reusable BM25 / Vector / Hybrid / KG retrieval. Deep health is deliberately less frequent so ongoing semantic/graph verification is retained without imposing that cost every five minutes.
+
+`configure-modulecatalog-kb-receiver-task-windows.ps1` can register the watcher as a current-user Limited AtLogOn task and persists both health cadences. Task settings include bounded restart attempts for transient startup failures such as delayed F: availability.
+
+Compatibility boundary: when a caller explicitly sets `RuntimeHealthSeconds=0` and does not explicitly supply `DeepRuntimeHealthSeconds`, health is treated as disabled as a whole and Deep is also set to 0. An explicitly supplied Deep value takes precedence and permits deep-only operation.
+
+Repository implementation does not install the task itself. Installation is a separate Master-PC action after the real transported-data runtime gate.
+
+## 15. Runtime health
+
+`check-modulecatalog-kb-runtime-windows.ps1` verifies marker/receipt/runtime-state authority, formal/reusable/delivery/relationship/case hashes and counts, Current corpus tags, MVS indexed cardinality, known degraded-search warnings, and accepted-snapshot → actual live ModuleCatalog Markdown projection integrity.
+
+For the projection gate, the health checker uses the accepted Current `records/*.md` as source, deterministically reproduces the only activation-time runtime transform — Catalog commit-prefixed filenames plus prefixing of frontmatter `related:` targets — and requires the actual prefixed files in `data\knowledge-search\records` to match by filename set and bytes. Matching counts/status cannot mask silent live Markdown drift.
+
+`-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP gates. The continuous receiver invokes Deep every 21600 seconds by default and records `DEEP_HEALTH_PASS` / `DEEP_HEALTH_FAILED` independently from the normal shallow health event.
+
+Health checks serialize against receive/cutover so they cannot certify a runtime while it is being replaced.
+
+## 16. Operational retention
+
+Receive/index operation creates large transport archives, accepted snapshots and rollback/search backups. These are bounded so a continuously running PC KB does not grow without limit.
+
+Default policy:
+
+```text
+activation rollback backups     3 per class
+processed delivery archives    20
+failed delivery archives       20
+accepted delivery snapshots     5
+failed search-runtime backups   2
+```
+
+Retention:
+
+- runs from the continuous watcher every 3600 seconds by default;
+- acquires `receive.lock` and skips if another receive/index/health operation is active;
+- skips while an activation transaction journal exists;
+- always protects the Current accepted snapshot;
+- protects the ACTIVE marker's formal/search/reusable rollback paths;
+- for older marker schema without `backupReusable`, derives the exact reusable rollback sibling from the shared activation timestamp and protects it;
+- removes only known paths under approved `F:\G-ACE-KB\data` roots;
+- may clean stale transaction scratch only while the receive lock is held and no activation journal exists;
+- keeps small per-commit receipt JSON files as audit evidence.
+
+See `docs/MODULECATALOG_KB_RETENTION.md`.
+
+## 17. Storage boundary
+
+```text
+F:\G-ACE-KB\
+├─ repo\                         # source/docs/tests only
 ├─ data\
 │  ├─ knowledge-records\
-│  │  ├─ gace-dev-kb.jsonl
-│  │  └─ formal-kb.jsonl
-│  ├─ knowledge-sources\
-│  │  └─ accepted\
-│  └─ knowledge-search\
-├─ runtime\
-│  └─ mcp-vector-search\
+│  ├─ knowledge-search\
+│  ├─ knowledge-sources\accepted\
+│  ├─ knowledge-inbox\modulecatalog\
+│  └─ knowledge-intake\modulecatalog\
+├─ runtime\mcp-vector-search\
 ├─ assets\
-│  └─ accepted-*\
 └─ .venv\
 ```
 
-Git stores source, configuration, design, tests, and durable documentation. Large indexes, caches, runtime downloads, generated data, generated knowledge-record exports, secrets, and local environments stay outside Git unless a later explicit design decision changes that boundary.
+Generated records, transport data, indexes, archives, runtime downloads, caches and local environments stay outside Git source.
 
-Cross-repository E2E uses a temporary OS workspace for the second repository, combined records, temporary corpus, and temporary search index. The test removes that workspace after a successful run; it does not create a new persistent repository or production resource.
+## 18. Current implementation boundary (2026-10-02)
 
-Knowledge-data extraction/normalization/admission from TGserver is not implemented in this repository. That processing system is a separate development scope and will integrate with TGserver and this KB later through explicit contracts.
+Proven on Master Windows before generalized transport:
 
-## 8. Windows compatibility boundary
+- pinned MVS 4.1.14 Windows compatibility: PASS;
+- formal 107-record baseline index/retrieval: PASS;
+- repository-history MCP: PASS;
+- 13 verified reusable records MCP + natural discovery: PASS.
 
-The pinned upstream runtime requires repository-managed Windows/runtime compatibility handling for measured defects:
+Implemented and GitHub-CI covered on the generalized receive branch:
 
-- Unix-only `resource` import guard;
-- result display fallback when original similarity is `None`;
-- Kuzu cleanup path normalization;
-- multiprocessing context: Windows must use `spawn`;
-- MCP SDK compatibility: `mcp-vector-search` 4.1.14 uses MCP SDK 1.x decorator APIs while its dependency constraint permits installed MCP SDK 2.x; the repository bootstrap adapts the installed server to the 2.x constructor-handler API and current initialization-options path;
-- embedding API compatibility: prefer the current embedding-dimension API and retain fallback only where required;
-- atomic rebuild compatibility: reopen the final BM25/vector backend after the temporary Lance path is finalized on Windows;
-- doc-only KG compatibility: do not attempt code-entity KG enrichment when the generated Markdown knowledge corpus contains no code entities;
-- isolated trial safety may disable MVS multiprocessing through an explicit environment gate without changing normal formal-index behavior;
-- canonical external-source checkout must disable CRLF rewriting before manifest byte verification.
+- current `gace.reusable-asset.v1` producer compatibility;
+- current regression fixture: 80 Assets / 720 Knowledge Units / 160 cases;
+- admission/integrity/idempotent replay validation;
+- projection schema v2 with full structured metadata/relationship/case retention;
+- partial transport/path safety;
+- inbox claim/resume/retry/failure/archive lifecycle;
+- timeout/process-tree cleanup;
+- duplicate delivery replay archive preservation;
+- single-Current replacement logic;
+- byte-exact preservation of non-Catalog rich runtime corpus;
+- runtime filename/link alignment;
+- deterministic active ModuleCatalog runtime-corpus hashing;
+- accepted Current snapshot → live prefixed runtime Markdown byte-exact verification;
+- full relationship sidecar graph projection;
+- activation transaction rollback/recovery;
+- receiver/health/retention serialization;
+- continuous receiver retry/backoff/shallow health/periodic Deep MCP health/retention;
+- bounded operational archives/backups;
+- actual Windows Scheduled Task registration/startup/uninstall CI gate;
+- existing BM25/Vector/Hybrid/KG/MCP reusable gates.
 
-Compatibility source alone is not enough. `tests/verify-mvs-windows.ps1` verifies the installed runtime and exact compatibility state. `scripts/index-knowledge-windows.ps1` then fails closed if the previously observed BM25 fallback, embedding deprecation, or doc-only KG entity-warning regressions reappear.
+Not yet claimed as real-PC PASS:
 
-## 9. Future boundary
+The generalized transported Catalog snapshot has not yet been genuinely delivered and activated through the installed Master-PC MVS runtime. Scheduled receiver task installation and its actual periodic shallow/Deep state have also not been verified on Master PC.
 
-TGserver-linked knowledge processing/admission and any Astera-oriented KB architecture are separate future integration material. They must not be represented as current implementation until implemented and validated in their own scope and integrated through explicit contracts.
+Those environment-specific gates remain required before PR #3 can be complete/merge-ready.
 
-The verified ModuleCatalog admission path does not by itself implement generic intake, candidate review, confidence scoring, supersession, or rejection/audit workflows.
+## 19. Future boundary
 
-## 10. Current implementation boundary (2026-10-01)
+TGserver-linked generic knowledge processing/admission and unrelated Astera-oriented KB architecture remain separate scopes unless explicitly integrated through a verified contract.
 
-Validated current capability:
-
-- isolated OSS runtime under `F:\G-ACE-KB\runtime\mcp-vector-search`;
-- repository-managed Windows bootstrap PASS;
-- Windows compatibility verifier PASS;
-- runtime multiprocessing context `spawn` PASS;
-- MCP SDK 2.x server compatibility PASS;
-- embedding dimension API compatibility PASS;
-- atomic BM25 backend reopen compatibility PASS;
-- doc-only KG enhancement compatibility PASS;
-- deterministic repository adapter/renderer/combiner tests PASS;
-- durable repository export defaults to full reachable Git history;
-- formal repository revision pinned to `origin/main` commit `9520098d9666bdf33372bcd34f15758bb9c66f01`;
-- formal repository export PASS: 94 records;
-- accepted-source registry PASS: 1 source;
-- canonical accepted-source checkout PASS with `AUTOCRLF=false`;
-- accepted-source manifest preflight PASS: 13 records;
-- accepted ModuleCatalog source pinned to `bd258ec91b6970853d14a7bf4e65731312a487e3`;
-- accepted DebugAI reusable skills: 13 distinct records;
-- formal combined knowledge PASS: 107 records / 2 repository identities;
-- formal corpus PASS: 107 Markdown records;
-- formal index PASS: 107/107 files, 1,167 chunks, 1,167 embeddings;
-- formal knowledge graph PASS: 957 entities, 979 relationships;
-- persisted BM25 index PASS;
-- historical retention gate PASS for `74e8171...` and `4912a442...`;
-- direct BM25 retention probe PASS for both known historical records;
-- BM25 fallback-warning regression gate PASS;
-- embedding deprecation-warning regression gate PASS;
-- doc-only KG entity-warning regression gate PASS;
-- MCP server metadata PASS: `SERVER=mcp-vector-search VERSION=0.4.0`;
-- MCP repository-history retrieval PASS for `74e8171...` and `4912a442...` in BM25 mode;
-- real MCP retrieval PASS for all 13 accepted DebugAI skill symbols;
-- natural-language MCP skill discovery PASS for cross-file dependency tracing, false-pass detection, and targeted regression strategy;
-- `GACE_DEBUGAI_SKILL_MCP_E2E=PASS RECORDS=13 NATURAL_CHECKS=3`;
-- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=107`;
-- `GACE_FORMAL_KB_PROMOTION=PASS RECORDS=107`;
-- historical cross-repository temporary E2E remains PASS: 90 records across `gace-dev-kb` and `Astera` with real MCP retrieval from both.
-
-Local-only evidence intentionally left untouched:
-
-- local `.gitignore` remains untracked;
-- the pre-existing local `scripts/__pycache__/` remains untracked.
-
-The current formal-KB boundary is closed for pinned repository-derived knowledge plus explicitly registered, already-verified external assets. Knowledge-data processing/admission from TGserver remains a separate development scope.
+Do not infer those systems from the ModuleCatalog reusable-asset intake path.

@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+"""Accept a transported ModuleCatalog KB export at the G-ACE KB boundary.
+
+ModuleCatalog owns canonical reusable-asset creation, verification, search-ready
+KBData generation and transport. G-ACE KB starts at receipt: verify every delivered
+byte against the producer manifests, build the local runtime projection, preserve
+structured relationship/case sidecars, and emit acceptance authority for activation.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import shutil
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from enrich_modulecatalog_search_corpus import enrich as enrich_search_corpus
+from import_modulecatalog_reusable_export import FORMAT, CATALOG_REPOSITORY, import_export
+
+PROJECTION_SCHEMA_VERSION = 2
+RUNTIME_ENRICHMENT = "mvs-4.1.14-frontmatter-v1"
+GIT_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+SAFE_ASSET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict):
+        raise RuntimeError(f"JSON_OBJECT_REQUIRED={path}")
+    return value
+
+
+def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    temp.replace(path)
+
+
+def derive_counts(manifest: dict[str, Any]) -> tuple[str, int, int, int, int]:
+    if manifest.get("schema_version") != 1 or manifest.get("format") != FORMAT:
+        raise RuntimeError("DELIVERY_MANIFEST_FORMAT_UNSUPPORTED")
+    catalog = manifest.get("catalog")
+    if not isinstance(catalog, dict):
+        raise RuntimeError("DELIVERY_CATALOG_MISSING")
+    if str(catalog.get("repository") or "") != CATALOG_REPOSITORY:
+        raise RuntimeError("DELIVERY_CATALOG_REPOSITORY_MISMATCH")
+    commit = str(catalog.get("commit") or "")
+    if not GIT_COMMIT_RE.fullmatch(commit):
+        raise RuntimeError(f"DELIVERY_CATALOG_COMMIT_INVALID={commit}")
+    assets = manifest.get("assets")
+    if not isinstance(assets, list) or not assets:
+        raise RuntimeError("DELIVERY_ASSETS_EMPTY")
+    asset_count = int(manifest.get("assetCount", -1))
+    if asset_count != len(assets):
+        raise RuntimeError(
+            f"DELIVERY_ASSET_COUNT_MISMATCH declared={asset_count} actual={len(assets)}"
+        )
+
+    asset_ids: set[str] = set()
+    record_count = relationship_count = case_count = 0
+    for item in assets:
+        if not isinstance(item, dict):
+            raise RuntimeError("DELIVERY_ASSET_ENTRY_INVALID")
+        asset_id = str(item.get("id") or "")
+        if not SAFE_ASSET_ID_RE.fullmatch(asset_id):
+            raise RuntimeError(f"DELIVERY_ASSET_ID_UNSAFE={asset_id}")
+        if asset_id in asset_ids:
+            raise RuntimeError(f"DELIVERY_ASSET_ID_DUPLICATE={asset_id}")
+        asset_ids.add(asset_id)
+        record_count += int(item.get("knowledgeUnits", -1))
+        relationship_count += int(item.get("relationships", -1))
+        case_count += int(item.get("cases", -1))
+    if min(record_count, relationship_count, case_count) < 0:
+        raise RuntimeError("DELIVERY_DECLARED_COUNT_INVALID")
+    return commit, asset_count, record_count, relationship_count, case_count
+
+
+def aggregate_sidecar(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    *,
+    filename: str,
+    expected_count: int,
+    output: Path,
+) -> int:
+    rows: list[dict[str, Any]] = []
+    for item in manifest["assets"]:
+        asset_id = str(item["id"])
+        source = delivery_root / "assets" / asset_id / filename
+        if not source.is_file():
+            raise RuntimeError(f"DELIVERY_SIDECAR_MISSING={asset_id}:{filename}")
+        for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise RuntimeError(
+                    f"DELIVERY_SIDECAR_OBJECT_REQUIRED={asset_id}:{filename}:{line_number}"
+                )
+            rows.append(value)
+    if len(rows) != expected_count:
+        raise RuntimeError(
+            f"DELIVERY_SIDECAR_COUNT_MISMATCH file={filename} "
+            f"expected={expected_count} actual={len(rows)}"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return len(rows)
+
+
+def build_projection(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    projection: Path,
+    *,
+    commit: str,
+    asset_count: int,
+    record_count: int,
+    relationship_count: int,
+    case_count: int,
+) -> dict[str, Any]:
+    records, metadata, corpus, imported_asset_count = import_export(
+        delivery_root,
+        projection,
+        expected_catalog_commit=commit,
+        expected_asset_count=asset_count,
+        expected_record_count=record_count,
+    )
+    if imported_asset_count != asset_count or len(records) != record_count or len(metadata) != record_count:
+        raise RuntimeError("DELIVERY_IMPORT_CARDINALITY_MISMATCH")
+
+    records_path = projection / "knowledge-records.jsonl"
+    metadata_path = projection / "knowledge-metadata.jsonl"
+    relationships_path = projection / "relationships.jsonl"
+    cases_path = projection / "cases.jsonl"
+    aggregate_sidecar(
+        delivery_root,
+        manifest,
+        filename="relationships.jsonl",
+        expected_count=relationship_count,
+        output=relationships_path,
+    )
+    aggregate_sidecar(
+        delivery_root,
+        manifest,
+        filename="cases.jsonl",
+        expected_count=case_count,
+        output=cases_path,
+    )
+    enriched_count = enrich_search_corpus(metadata_path, corpus)
+    if enriched_count != record_count:
+        raise RuntimeError(
+            f"DELIVERY_CORPUS_ENRICH_COUNT_MISMATCH expected={record_count} actual={enriched_count}"
+        )
+    corpus_count = len(list(corpus.glob("*.md")))
+    if corpus_count != record_count:
+        raise RuntimeError(
+            f"DELIVERY_CORPUS_COUNT_MISMATCH expected={record_count} actual={corpus_count}"
+        )
+    return {
+        "records_hash": sha256_file(records_path),
+        "metadata_hash": sha256_file(metadata_path),
+        "relationships_hash": sha256_file(relationships_path),
+        "cases_hash": sha256_file(cases_path),
+        "corpus_count": corpus_count,
+    }
+
+
+def validate_replay_against_state(
+    delivery_root: Path,
+    manifest: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    commit: str,
+    asset_count: int,
+    record_count: int,
+    relationship_count: int,
+    case_count: int,
+    temp_parent: Path,
+) -> None:
+    """Fully re-verify a repeated transport; never trust an old receipt alone."""
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{commit[:12]}.reverify-", dir=temp_parent))
+    try:
+        result = build_projection(
+            delivery_root,
+            manifest,
+            temp_dir / "projection",
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+        )
+        expected = {
+            "knowledgeRecordsSha256": result["records_hash"],
+            "knowledgeMetadataSha256": result["metadata_hash"],
+            "relationshipsSha256": result["relationships_hash"],
+            "casesSha256": result["cases_hash"],
+        }
+        for field, actual in expected.items():
+            if str(state.get(field) or "") != actual:
+                raise RuntimeError(
+                    f"IDEMPOTENT_DELIVERY_PROJECTION_MISMATCH field={field} "
+                    f"accepted={state.get(field)} replay={actual}"
+                )
+        if int(state.get("corpusCount", -1)) != int(result["corpus_count"]):
+            raise RuntimeError("IDEMPOTENT_DELIVERY_CORPUS_COUNT_MISMATCH")
+        if str(state.get("corpusRuntimeEnrichment") or "") != RUNTIME_ENRICHMENT:
+            raise RuntimeError("IDEMPOTENT_DELIVERY_ENRICHMENT_MISMATCH")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def receipt_payload(
+    *,
+    status: str,
+    commit: str,
+    asset_count: int,
+    record_count: int,
+    relationship_count: int,
+    case_count: int,
+    manifest_hash: str,
+    accepted_root: Path,
+    records_hash: str | None = None,
+    metadata_hash: str | None = None,
+    relationships_hash: str | None = None,
+    cases_hash: str | None = None,
+    corpus_count: int | None = None,
+    prior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schemaVersion": 1,
+        "projectionSchemaVersion": PROJECTION_SCHEMA_VERSION,
+        "status": status,
+        "catalogRepository": CATALOG_REPOSITORY,
+        "catalogCommit": commit,
+        "assetCount": asset_count,
+        "knowledgeUnitCount": record_count,
+        "relationshipCount": relationship_count,
+        "caseCount": case_count,
+        "deliveryManifestSha256": manifest_hash,
+        "acceptedRoot": str(accepted_root),
+        "acceptedAtUtc": datetime.now(timezone.utc).isoformat(),
+    }
+    if records_hash:
+        payload["knowledgeRecordsSha256"] = records_hash
+    if metadata_hash:
+        payload["knowledgeMetadataSha256"] = metadata_hash
+    if relationships_hash:
+        payload["relationshipsSha256"] = relationships_hash
+    if cases_hash:
+        payload["casesSha256"] = cases_hash
+    if corpus_count is not None:
+        payload["corpusCount"] = corpus_count
+    if prior and prior.get("status") == "ACTIVE":
+        for key, value in prior.items():
+            if key not in {"acceptedAtUtc"}:
+                payload[key] = value
+        payload["status"] = "ACTIVE"
+    return payload
+
+
+def accept_delivery(delivery_root: Path, accepted_root: Path, receipt_path: Path) -> dict[str, Any]:
+    delivery_root = delivery_root.resolve()
+    accepted_root = accepted_root.resolve()
+    receipt_path = receipt_path.resolve()
+    manifest_path = delivery_root / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"DELIVERY_MANIFEST_MISSING={manifest_path}")
+
+    manifest = read_json(manifest_path)
+    commit, asset_count, record_count, relationship_count, case_count = derive_counts(manifest)
+    manifest_hash = sha256_file(manifest_path)
+    prior_receipt = read_json(receipt_path) if receipt_path.is_file() else None
+
+    if accepted_root.exists():
+        state_path = accepted_root / "state.json"
+        if not state_path.is_file():
+            raise RuntimeError(f"ACCEPTED_ROOT_CONFLICT_NO_STATE={accepted_root}")
+        state = read_json(state_path)
+        if str(state.get("catalogCommit") or "") != commit or str(state.get("deliveryManifestSha256") or "") != manifest_hash:
+            raise RuntimeError(f"ACCEPTED_ROOT_CONFLICT={accepted_root}")
+        if int(state.get("projectionSchemaVersion", 0)) != PROJECTION_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"ACCEPTED_PROJECTION_VERSION_MISMATCH expected={PROJECTION_SCHEMA_VERSION} "
+                f"actual={state.get('projectionSchemaVersion')} root={accepted_root}"
+            )
+        for rel in (
+            "projection/knowledge-records.jsonl",
+            "projection/knowledge-metadata.jsonl",
+            "projection/relationships.jsonl",
+            "projection/cases.jsonl",
+        ):
+            if not (accepted_root / rel).is_file():
+                raise RuntimeError(f"ACCEPTED_PROJECTION_FILE_MISSING={accepted_root / rel}")
+
+        validate_replay_against_state(
+            delivery_root,
+            manifest,
+            state,
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+            temp_parent=accepted_root.parent,
+        )
+        receipt = receipt_payload(
+            status="ACCEPTED",
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+            manifest_hash=manifest_hash,
+            accepted_root=accepted_root,
+            records_hash=str(state.get("knowledgeRecordsSha256") or ""),
+            metadata_hash=str(state.get("knowledgeMetadataSha256") or ""),
+            relationships_hash=str(state.get("relationshipsSha256") or ""),
+            cases_hash=str(state.get("casesSha256") or ""),
+            corpus_count=int(state.get("corpusCount", record_count)),
+            prior=prior_receipt,
+        )
+        write_json_atomic(receipt_path, receipt)
+        print(
+            "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=YES REVERIFIED=YES "
+            f"STATUS={receipt['status']} COMMIT={commit} ASSETS={asset_count} RECORDS={record_count}"
+        )
+        return receipt
+
+    accepted_root.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{accepted_root.name}.accept-", dir=accepted_root.parent))
+    try:
+        projection = temp_dir / "projection"
+        result = build_projection(
+            delivery_root,
+            manifest,
+            projection,
+            commit=commit,
+            asset_count=asset_count,
+            record_count=record_count,
+            relationship_count=relationship_count,
+            case_count=case_count,
+        )
+        state = {
+            "schemaVersion": 1,
+            "projectionSchemaVersion": PROJECTION_SCHEMA_VERSION,
+            "status": "ACCEPTED",
+            "catalogRepository": CATALOG_REPOSITORY,
+            "catalogCommit": commit,
+            "assetCount": asset_count,
+            "knowledgeUnitCount": record_count,
+            "relationshipCount": relationship_count,
+            "caseCount": case_count,
+            "corpusCount": result["corpus_count"],
+            "corpusRuntimeEnrichment": RUNTIME_ENRICHMENT,
+            "deliveryManifestSha256": manifest_hash,
+            "knowledgeRecordsSha256": result["records_hash"],
+            "knowledgeMetadataSha256": result["metadata_hash"],
+            "relationshipsSha256": result["relationships_hash"],
+            "casesSha256": result["cases_hash"],
+            "acceptedAtUtc": datetime.now(timezone.utc).isoformat(),
+        }
+        write_json_atomic(temp_dir / "state.json", state)
+        shutil.copy2(manifest_path, temp_dir / "delivery-manifest.json")
+        temp_dir.replace(accepted_root)
+    except BaseException:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    state = read_json(accepted_root / "state.json")
+    receipt = receipt_payload(
+        status="ACCEPTED",
+        commit=commit,
+        asset_count=asset_count,
+        record_count=record_count,
+        relationship_count=relationship_count,
+        case_count=case_count,
+        manifest_hash=manifest_hash,
+        accepted_root=accepted_root,
+        records_hash=str(state["knowledgeRecordsSha256"]),
+        metadata_hash=str(state["knowledgeMetadataSha256"]),
+        relationships_hash=str(state["relationshipsSha256"]),
+        cases_hash=str(state["casesSha256"]),
+        corpus_count=int(state["corpusCount"]),
+        prior=prior_receipt,
+    )
+    write_json_atomic(receipt_path, receipt)
+    print(
+        "GACE_MODULECATALOG_DELIVERY_ACCEPT=PASS IDEMPOTENT=NO "
+        f"STATUS={receipt['status']} COMMIT={commit} ASSETS={asset_count} "
+        f"RECORDS={record_count} RELATIONSHIPS={relationship_count} CASES={case_count}"
+    )
+    return receipt
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--delivery-root", type=Path, required=True)
+    parser.add_argument("--accepted-root", type=Path, required=True)
+    parser.add_argument("--receipt", type=Path, required=True)
+    args = parser.parse_args()
+    accept_delivery(args.delivery_root, args.accepted_root, args.receipt)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
