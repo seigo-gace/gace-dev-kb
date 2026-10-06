@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = Join-Path $Root 'repo'
 $RuntimePython = Join-Path $Root 'runtime\\mcp-vector-search\\Scripts\\python.exe'
 $Bridge = Join-Path $Repo 'scripts\\gace_kb_chat_bridge.py'
+$TgZeroLogger = Join-Path $Repo 'scripts\\tgserver_zero_kb_log.py'
 $SearchRoot = Join-Path $Root 'data\\knowledge-search'
 $CurrentReusable = Join-Path $Root 'data\\knowledge-sources\\accepted\\modulecatalog-reusable-current'
 $Metadata = Join-Path $CurrentReusable 'knowledge-metadata.jsonl'
@@ -18,7 +19,7 @@ $Cases = Join-Path $CurrentReusable 'cases.jsonl'
 $ScratchRoot = Join-Path $Root 'data\\knowledge-intake\\chat-bridge\\tmp'
 $RemoteRef = "refs/remotes/origin/$ControlBranch"
 
-foreach ($path in @($Repo,$RuntimePython,$Bridge,$SearchRoot,$Metadata,$Relationships,$Cases)) {
+foreach ($path in @($Repo,$RuntimePython,$Bridge,$TgZeroLogger,$SearchRoot,$Metadata,$Relationships,$Cases)) {
     if (-not (Test-Path $path)) { throw "CHAT_BRIDGE_REQUIRED_PATH_MISSING=$path" }
 }
 if ($MaxRequests -lt 1 -or $MaxRequests -gt 100) { throw "CHAT_BRIDGE_MAX_REQUESTS_INVALID=$MaxRequests" }
@@ -86,9 +87,22 @@ foreach ($requestPath in $pending) {
         [System.IO.File]::WriteAllText($requestFile,$requestText,[System.Text.UTF8Encoding]::new($false))
 
         $bridgeArgs = @('-B',$Bridge,'--request',$requestFile,'--result',$resultFile,'--python',$RuntimePython,'--project-root',$SearchRoot,'--metadata',$Metadata,'--relationships',$Relationships,'--cases',$Cases,'--timeout',[string]$TimeoutSeconds)
+        $startedAt = [DateTime]::UtcNow
         & $RuntimePython @bridgeArgs
         $bridgeExit = $LASTEXITCODE
         if (-not (Test-Path $resultFile)) { throw "CHAT_BRIDGE_RESULT_MISSING=$requestId" }
+        $durationMs = [int][Math]::Min(86400000,[Math]::Max(0,([DateTime]::UtcNow - $startedAt).TotalMilliseconds))
+        try {
+            $resultObject = Get-Content -Path $resultFile -Raw | ConvertFrom-Json
+            $logAction = [string]$resultObject.action
+            $logStatus = if ([string]$resultObject.status -eq 'PASS') { 'PASS' } else { 'FAIL' }
+            $logArgs = @('-B',$TgZeroLogger,'--request-id',$requestId,'--action',$logAction,'--status',$logStatus,'--duration-ms',[string]$durationMs)
+            if ($logStatus -eq 'FAIL') { $logArgs += @('--error-code','BRIDGE_FAILED') }
+            $logOutput = @(& $RuntimePython @logArgs 2>&1)
+            if ($logOutput.Count -gt 0) { Write-Host ($logOutput -join [Environment]::NewLine) }
+        } catch {
+            Write-Host "GACE_KB_TGZERO_LOG=FAILED CLASS=POWERSHELL_WRAPPER"
+        }
 
         Invoke-Git @('fetch','--no-tags','origin',$fetchSpec) | Out-Null
         $existing = @(Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--',$resultPath))
