@@ -1,0 +1,624 @@
+{
+  "schema_version": "gace.kb.chat-result.v1",
+  "request_id": "req-chat-kb-e2e-exact-002",
+  "action": "exact",
+  "status": "PASS",
+  "requested_by": "gpt-chat",
+  "completed_at": "2026-10-06T10:46:31.258943Z",
+  "result": {
+    "knowledge_id": "approval-route-resolver::logic",
+    "parent_asset_id": "approval-route-resolver",
+    "metadata": {
+      "schema_version": 1,
+      "knowledge_id": "approval-route-resolver::logic",
+      "parent_asset_id": "approval-route-resolver",
+      "identity": {
+        "asset_id": "approval-route-resolver",
+        "name": "Approval Route Resolver",
+        "version": "1.0.0",
+        "asset_kind": "unknown",
+        "symbol": "run"
+      },
+      "asset_kind": "unknown",
+      "knowledge_kind": "logic",
+      "name": "Approval Route Resolver Logic",
+      "summary": "Resolve an approval route from explicit action, risk, capability and policy rules. | Approval Route Resolver Logic | logic",
+      "version": "1.0.0",
+      "data_class": "canonical",
+      "classification": {
+        "domains": [],
+        "layers": [
+          "Part"
+        ],
+        "languages": [
+          "JavaScript"
+        ],
+        "runtimes": [
+          "Node.js 22+"
+        ],
+        "tags": [
+          "gace",
+          "admini",
+          "management-ai",
+          "minimal-module"
+        ]
+      },
+      "discovery": {
+        "summary": "Resolve an approval route from explicit action, risk, capability and policy rules.",
+        "purpose": "Resolve an approval route from explicit action, risk, capability and policy rules.",
+        "responsibility": "Resolve an approval route from explicit action, risk, capability and policy rules.",
+        "capabilities": [],
+        "keywords": [
+          "approval-route-resolver",
+          "approval",
+          "route",
+          "resolver",
+          "resolve",
+          "an",
+          "from",
+          "explicit",
+          "action",
+          "risk",
+          "capability",
+          "and",
+          "policy",
+          "rules.",
+          "part",
+          "javascript",
+          "node.js",
+          "22+",
+          "gace",
+          "admini",
+          "management-ai",
+          "minimal-module",
+          "single",
+          "responsibility",
+          "v8",
+          "business",
+          "authority",
+          "preserved",
+          "fail",
+          "closed",
+          "where",
+          "input",
+          "is",
+          "insufficient",
+          "no",
+          "direct",
+          "mutation",
+          "code",
+          "design",
+          "logic",
+          "architecture",
+          "test",
+          "#",
+          "purpose",
+          "on",
+          "structurally",
+          "invalid",
+          "input.",
+          "do",
+          "not",
+          "execute",
+          "side",
+          "effects.",
+          "replace",
+          "authority.",
+          "validate",
+          "-",
+          "apply",
+          "data",
+          "compute",
+          "only",
+          "this",
+          "skill",
+          "return",
+          "result",
+          "without",
+          "pure",
+          "deterministic",
+          "single-responsibility",
+          "function.",
+          "network",
+          "or",
+          "thresholds",
+          "are",
+          "inputs",
+          "hard-coded"
+        ],
+        "semantic_terms": [
+          "action",
+          "capability",
+          "policy",
+          "risk"
+        ]
+      },
+      "applicability": {
+        "use_when": [
+          "Resolve an approval route from explicit action, risk, capability and policy rules."
+        ],
+        "do_not_use_when": [],
+        "preconditions": [],
+        "required_context": [
+          "run({action,risk,capability,policy={}}={})"
+        ],
+        "failure_conditions": [
+          "fail closed where input is insufficient",
+          "Fail closed on structurally invalid input.",
+          "run -> {status:\"BLOCKED\",route:null,reason:\"INVALID_INPUT\"}",
+          "run -> {status:\"BLOCKED\",route:null,reason:matches.length?\"AMBIGUOUS_ROUTE\":\"NO_ROUTE\"}"
+        ]
+      },
+      "contract": {
+        "status": "known",
+        "inputs": [
+          "run({action,risk,capability,policy={}}={})"
+        ],
+        "outputs": [
+          "run -> {status:\"BLOCKED\",route:null,reason:\"INVALID_INPUT\"}",
+          "run -> {status:\"BLOCKED\",route:null,reason:matches.length?\"AMBIGUOUS_ROUTE\":\"NO_ROUTE\"}",
+          "run -> {status:\"PASS\",route:matches[0].route}"
+        ],
+        "required_fields": [],
+        "optional_fields": [],
+        "error_behavior": "fail closed where input is insufficient | Fail closed on structurally invalid input. | run -> {status:\"BLOCKED\",route:null,reason:\"INVALID_INPUT\"} | run -> {status:\"BLOCKED\",route:null,reason:matches.length?\"AMBIGUOUS_ROUTE\":\"NO_ROUTE\"}",
+        "side_effects": "Do not execute side effects.",
+        "mutation_authority": false
+      },
+      "composition": {
+        "depends_on": [],
+        "requires": [],
+        "recommended_before": [],
+        "recommended_after": [],
+        "complements": [],
+        "alternative_to": [],
+        "conflicts_with": [],
+        "supersedes": []
+      },
+      "implementation": {
+        "languages": [
+          "JavaScript"
+        ],
+        "runtimes": [
+          "Node.js 22+"
+        ],
+        "entrypoints": [
+          "source/index.js"
+        ],
+        "source_files": [
+          "source/index.js"
+        ],
+        "dependencies": []
+      },
+      "cases": [],
+      "relationships": [
+        {
+          "schema_version": 1,
+          "relationship_id": "approval-route-resolver::contains::approval-route-resolver::logic",
+          "from": "approval-route-resolver",
+          "relation": "contains",
+          "to": "approval-route-resolver::logic",
+          "verified": true,
+          "derivation": {
+            "type": "canonical-projection",
+            "derived_from": [
+              "logic.md"
+            ]
+          }
+        }
+      ],
+      "verification": {
+        "status": "verified",
+        "normal_test": {
+          "passed": true,
+          "commands": [
+            "node --test tests/normal/approval-route-resolver.test.cjs"
+          ],
+          "expectedResults": [
+            "Command exits with code 0 and all assertions pass."
+          ]
+        },
+        "user_test": {
+          "passed": true,
+          "commands": [
+            "node --test tests/user/approval-route-resolver.test.cjs"
+          ],
+          "expectedResults": [
+            "Command exits with code 0 and all assertions pass."
+          ]
+        },
+        "verified_at": "2026-09-30T01:00:00+09:00",
+        "validation_boundary": "Only the checks explicitly recorded in evidence.json are represented as verified.",
+        "known_unverified": []
+      },
+      "provenance": {
+        "origin": {
+          "repository": "local-lab://chatgpt/admin-ai-wave1",
+          "commit": "local-verified-2026-09-30"
+        },
+        "catalog": {
+          "repository": "seigo-gace/modular-catalog",
+          "commit": "68e7d643d0e6931e646fd8895d189fb4e1ee337d",
+          "asset_path": "assets/approval-route-resolver",
+          "asset_id": "approval-route-resolver"
+        }
+      },
+      "lifecycle": {
+        "status": "verified",
+        "introduced_version": "1.0.0",
+        "deprecated_at": null,
+        "superseded_by": null
+      },
+      "integrity": {
+        "asset_hash": "4a4336ddedad329fc8e00a663549fd1e3012ad427cca4a968ef6b1e9c2175837",
+        "meta_hash": "0f44bfa25df8d5e48bfeade750d7d3b65feecf7c2967d0a6b461f0cd7ae7f4ab",
+        "manifest_algorithm": "sha256",
+        "files": [
+          {
+            "path": "architecture.md",
+            "size": 166,
+            "sha256": "6b17500d7063f02a0496d64ac3f5a5c3a7a8e9d0385c2bdf01794d89db574787"
+          },
+          {
+            "path": "design.md",
+            "size": 213,
+            "sha256": "f5adc51107ab1ed51acab26ce6910df208248a16c66d6b29a2b28308b741bec2"
+          },
+          {
+            "path": "evidence.json",
+            "size": 439,
+            "sha256": "235e3afb7aaf0e80de34b4bd56a97464b9f3594c5de3e3754173b685e966df2c"
+          },
+          {
+            "path": "logic.md",
+            "size": 144,
+            "sha256": "6f87980c12cd929261e070e442461dfd961d927305d0258d2ba713add325123c"
+          },
+          {
+            "path": "meta.json",
+            "size": 974,
+            "sha256": "f9fe3768258b86e9ec71b3ed3d8d0f9914d2c27852f4cfadee7dea9a7fd0e500"
+          },
+          {
+            "path": "README.md",
+            "size": 110,
+            "sha256": "9a8ef619900b1a6200b27d539debda658e7854b4b15c1e6bab9a680d591575c0"
+          },
+          {
+            "path": "source/index.js",
+            "size": 575,
+            "sha256": "7a4d35afe55e59c4750e67396a5538f302fb31d2a6bbe9cdf2b041527f3a0411"
+          },
+          {
+            "path": "tests/normal/approval-route-resolver.test.cjs",
+            "size": 293,
+            "sha256": "e0adc52a7d70a31ebb7764fa1bc1335796245e7e74b8a06494f9396dc98a5f0b"
+          },
+          {
+            "path": "tests/user/approval-route-resolver.test.cjs",
+            "size": 256,
+            "sha256": "a07c26f77a63aa9c32665cbbc4cab69c1aaf3a7d7ea75f78fbb7f9833b7bc837"
+          }
+        ],
+        "bundle_hash": "12be3bd532bb442a3ef2a890f67c2f549f3422a0dfbcdef6695954b69219c679"
+      },
+      "asset_derivation": {
+        "canonical_sources": [
+          "meta.json",
+          "README.md",
+          "design.md",
+          "logic.md",
+          "architecture.md",
+          "evidence.json",
+          "manifest.json",
+          "source/",
+          "tests/"
+        ],
+        "derived_fields": [
+          {
+            "field": "identity.asset_kind",
+            "type": "not-recorded",
+            "source": "no explicit asset kind or skill tag",
+            "verified": false
+          },
+          {
+            "field": "reusability.asset_types",
+            "type": "deterministic-derived",
+            "source": "validated registered-asset contract: source/code + design.md + logic.md + architecture.md + normal/user tests; explicit meta tags/classification preserved",
+            "verified": false
+          },
+          {
+            "field": "reusability.five_v",
+            "type": "not-recorded",
+            "source": "meta.fiveV is not recorded",
+            "verified": false
+          },
+          {
+            "field": "discovery.keywords",
+            "type": "deterministic-derived",
+            "source": "meta + recorded reusable documents + reusable asset profile",
+            "verified": false
+          },
+          {
+            "field": "contract.mutation_authority",
+            "type": "deterministic-derived",
+            "source": "meta.constraints",
+            "verified": false
+          },
+          {
+            "field": "contract.required_fields",
+            "type": "not-recorded",
+            "source": "current structural projection does not infer field requiredness",
+            "verified": false
+          },
+          {
+            "field": "contract.optional_fields",
+            "type": "not-recorded",
+            "source": "current structural projection does not infer field optionality",
+            "verified": false
+          },
+          {
+            "field": "applicability.use_when",
+            "type": "deterministic-derived",
+            "source": "meta.purpose",
+            "verified": false
+          },
+          {
+            "field": "applicability.required_context",
+            "type": "deterministic-derived",
+            "source": "ast-grep exported function signatures",
+            "verified": false
+          },
+          {
+            "field": "applicability.failure_conditions",
+            "type": "deterministic-derived",
+            "source": "explicit failure statements + exact failure-bearing return expressions",
+            "verified": false
+          },
+          {
+            "field": "contract.status",
+            "type": "deterministic-derived",
+            "source": "ast-grep observed input/output interface + normal/user evidence PASS",
+            "verified": false
+          },
+          {
+            "field": "contract.error_behavior",
+            "type": "deterministic-derived",
+            "source": "explicit failure statements + exact failure-bearing return expressions",
+            "verified": false
+          },
+          {
+            "field": "contract.side_effects",
+            "type": "deterministic-derived",
+            "source": "design.md",
+            "verified": false
+          },
+          {
+            "field": "identity.symbol",
+            "type": "deterministic-derived",
+            "source": "ast-grep exact export set from registered source/code files",
+            "verified": false
+          },
+          {
+            "field": "discovery.semantic_terms",
+            "type": "deterministic-derived",
+            "source": "ast-grep exported symbols + function parameters + imports/requires",
+            "verified": false
+          },
+          {
+            "field": "contract.inputs",
+            "type": "deterministic-derived",
+            "source": "ast-grep exported function signatures",
+            "verified": false
+          },
+          {
+            "field": "contract.outputs",
+            "type": "deterministic-derived",
+            "source": "ast-grep exact return expressions of exported functions",
+            "verified": false
+          }
+        ]
+      },
+      "unit_derivation": {
+        "type": "canonical-projection",
+        "derived_from": [
+          "logic.md"
+        ],
+        "verified": true
+      },
+      "source_paths": [
+        "logic.md"
+      ],
+      "content_status": "recorded",
+      "content": "# Logic\n\nValidate input -> apply explicit policy/data -> compute only this skill responsibility -> return explicit result without side effects.\n",
+      "_gace": {
+        "type": "reusable_asset",
+        "repository": "seigo-gace/modular-catalog",
+        "commit": "68e7d643d0e6931e646fd8895d189fb4e1ee337d",
+        "summary": "Resolve an approval route from explicit action, risk, capability and policy rules. | Approval Route Resolver Logic | logic",
+        "cause": "",
+        "fix": "",
+        "validation": "status=verified; verifiedAt=2026-09-30T01:00:00+09:00; boundary=Only the checks explicitly recorded in evidence.json are represented as verified.; normal.passed=true; user.passed=true",
+        "source": "modulecatalog:seigo-gace/modular-catalog@68e7d643d0e6931e646fd8895d189fb4e1ee337d#assets/approval-route-resolver::approval-route-resolver::logic"
+      }
+    },
+    "relationships": [
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::overview",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::overview",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "meta.json"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::readme",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::readme",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "README.md"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::design",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::design",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "design.md"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::logic",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::logic",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "logic.md"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::architecture",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::architecture",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "architecture.md"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::evidence",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::evidence",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "evidence.json"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::code::source/index.js",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::code::source/index.js",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "source/index.js"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::test::tests/normal/approval-route-resolver.test.cjs",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::test::tests/normal/approval-route-resolver.test.cjs",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "tests/normal/approval-route-resolver.test.cjs"
+          ]
+        }
+      },
+      {
+        "schema_version": 1,
+        "relationship_id": "approval-route-resolver::contains::approval-route-resolver::test::tests/user/approval-route-resolver.test.cjs",
+        "from": "approval-route-resolver",
+        "relation": "contains",
+        "to": "approval-route-resolver::test::tests/user/approval-route-resolver.test.cjs",
+        "verified": true,
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "tests/user/approval-route-resolver.test.cjs"
+          ]
+        }
+      }
+    ],
+    "cases": [
+      {
+        "schema_version": 1,
+        "case_id": "approval-route-resolver::case::normal::approval-route-resolver.test.cjs",
+        "parent_asset_id": "approval-route-resolver",
+        "case_type": "normal",
+        "scenario": null,
+        "input": null,
+        "expected": [
+          "Command exits with code 0 and all assertions pass."
+        ],
+        "actual": null,
+        "result": "PASS",
+        "source_test": "tests/normal/approval-route-resolver.test.cjs",
+        "test_content": "const assert=require('node:assert/strict'); const {run}=require('../../source/index.js'); const p={routes:[{actions:['refund'],risks:['HIGH'],capabilities:['refund.manage'],route:'MASTER'}]}; assert.equal(run({action:'refund',risk:'HIGH',capability:'refund.manage',policy:p}).route,'MASTER');\n",
+        "extraction_status": "source-reference-only",
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "tests/normal/approval-route-resolver.test.cjs",
+            "evidence.json#/normal"
+          ],
+          "verified": true
+        }
+      },
+      {
+        "schema_version": 1,
+        "case_id": "approval-route-resolver::case::user::approval-route-resolver.test.cjs",
+        "parent_asset_id": "approval-route-resolver",
+        "case_type": "user",
+        "scenario": null,
+        "input": null,
+        "expected": [
+          "Command exits with code 0 and all assertions pass."
+        ],
+        "actual": null,
+        "result": "PASS",
+        "source_test": "tests/user/approval-route-resolver.test.cjs",
+        "test_content": "const assert=require('node:assert/strict'); const {run}=require('../../source/index.js'); const p={routes:[{actions:['publish'],route:'PUBLISHER'}]}; assert.equal(run({action:'publish',risk:'LOW',capability:'content.publish',policy:p}).route,'PUBLISHER');\n",
+        "extraction_status": "source-reference-only",
+        "derivation": {
+          "type": "canonical-projection",
+          "derived_from": [
+            "tests/user/approval-route-resolver.test.cjs",
+            "evidence.json#/user"
+          ],
+          "verified": true
+        }
+      }
+    ]
+  }
+}
