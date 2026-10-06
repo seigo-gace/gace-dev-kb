@@ -50,6 +50,11 @@ jobs:
             Write-Host "GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=LINUX FILE=$file"
           }
 
+      - name: GitHub path filter regression
+        shell: pwsh
+        run: |
+          ./tests/test_chat_bridge_path_filters.ps1
+
   windows-gates:
     runs-on: windows-latest
     steps:
@@ -89,3 +94,8 @@ jobs:
             }
             Write-Host "GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=WINDOWS FILE=$file"
           }
+
+      - name: Windows GitHub path filter regression
+        shell: powershell
+        run: |
+          .\\tests\\test_chat_bridge_path_filters.ps1
