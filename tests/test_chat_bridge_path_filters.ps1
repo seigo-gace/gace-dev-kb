@@ -55,4 +55,10 @@ if (-not $taskInstallerSource.Contains("`$TaskPath = '\'")) { throw 'CHAT_BRIDGE
 if ($taskInstallerSource.Contains("`$TaskPath = '\\'")) { throw 'CHAT_BRIDGE_TASK_ROOT_PATH_DOUBLE_SEPARATOR' }
 
 Write-Host 'GACE_KB_CHAT_PATH_FILTER=PASS'
+if (-not $taskInstallerSource.Contains("'-WindowStyle','Hidden'")) { throw 'CHAT_BRIDGE_TASK_WINDOWSTYLE_NOT_HIDDEN' }
+$watcherPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\watch-gace-kb-chat-github-bridge-windows.ps1'
+$watcherSource = Get-Content -Path $watcherPath -Raw
+if (-not $watcherSource.Contains('-WindowStyle Hidden')) { throw 'CHAT_BRIDGE_WATCHER_CHILD_WINDOWSTYLE_NOT_HIDDEN' }
+
 Write-Host 'GACE_KB_CHAT_TASK_PATH=PASS'
+Write-Host 'GACE_KB_CHAT_HIDDEN_WINDOW=PASS'
