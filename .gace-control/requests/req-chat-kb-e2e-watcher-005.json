@@ -1,0 +1,9 @@
+{
+  "schema_version": "gace.kb.chat-request.v1",
+  "request_id": "req-chat-kb-e2e-watcher-005",
+  "action": "search",
+  "query": "approval routing reusable logic",
+  "mode": "hybrid",
+  "limit": 5,
+  "requested_by": "gpt-chat"
+}
