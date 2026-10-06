@@ -46,6 +46,7 @@ if (-not (Test-Path $PowerShellExe)) { throw "CHAT_BRIDGE_WINDOWS_POWERSHELL_MIS
 
 $arguments = @(
     '-NoProfile',
+    '-WindowStyle','Hidden',
     '-ExecutionPolicy','Bypass',
     '-File',('"' + $Watcher + '"'),
     '-Root',('"' + $Root + '"'),
