@@ -338,10 +338,22 @@ Until that real transported-data Windows gate passes, do not claim the new full 
 
 ## TGserver ZERO P014 runtime logging
 
-G-ACE KB runtime request completion/failure metadata can be forwarded to TGserver ZERO project `P014` through the existing ZERO `POST /ingest/bulk` contract.
+G-ACE KB search/exact completion and failure metadata is forwarded to TGserver ZERO project `P014` through the existing product-neutral Webhook Gateway Internal Event API.
+
+Runtime path:
+
+```text
+Master-PC G-ACE KB
+  -> Webhook Gateway POST /internal/events
+  -> registered generic destination tgserver-zero-bulk
+  -> existing Cloudflare Access protected TGserver ZERO POST /ingest/bulk
+  -> P014 Telegram raw log + Meilisearch
+```
+
+The Master PC does not receive TGserver Cloudflare Access credentials. It holds only the scoped Gateway Internal Event API endpoint/token required for this trusted producer. TGserver Access credentials remain owned by the Gateway deployment.
 
 Only bounded operational metadata is emitted: request ID, action (`search`/`exact`), PASS/FAIL, duration, and a bounded internal error code. Query text, knowledge IDs, KB content, search results, Case/Relationship content, arbitrary exception text, filesystem paths, and credentials are not forwarded.
 
-The producer is fail-open for KB operation. When `TGSERVER_LOG_URL` is unset, logging is disabled without changing the KB request result. A send is successful only when TGserver returns exactly one `accepted` or `duplicate` receipt.
+Logging is fail-open for KB requests. If `GACE_EVENT_GATEWAY_URL` or `GACE_EVENT_GATEWAY_TOKEN` is absent, logging is disabled without changing the KB result. A log is considered accepted only after the Gateway returns its durable HTTP 202 receipt with `ok=true`.
 
-Runtime activation is separate from Source registration. `seigo-gace/gace-dev-kb/default -> P014` must exist in the TGserver ZERO registry and P014 topics/runtime routing must be verified before claiming live delivery.
+TGserver ZERO registry ownership remains separate: `seigo-gace/gace-dev-kb/default -> P014` in G002. Topic provisioning, Gateway deployment configuration, Telegram raw persistence, and central Reader retrieval must each be verified independently before live delivery is claimed.
