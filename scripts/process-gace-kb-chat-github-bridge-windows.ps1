@@ -28,8 +28,15 @@ New-Item -ItemType Directory -Path $ScratchRoot -Force | Out-Null
 
 function Invoke-Git {
     param([Parameter(Mandatory=$true)][string[]]$Arguments)
-    $output = @(& git -C $Repo @Arguments 2>&1)
-    $code = $LASTEXITCODE
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git -C $Repo @Arguments 2>&1)
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     if ($code -ne 0) {
         throw "CHAT_BRIDGE_GIT_FAILED=$code ARGS=$($Arguments -join ' ') OUTPUT=$($output -join [Environment]::NewLine)"
     }
