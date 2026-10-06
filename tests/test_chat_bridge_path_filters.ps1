@@ -6,14 +6,14 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $ProcessorPath)) { throw "CHAT_BRIDGE_PROCESSOR_MISSING=$ProcessorPath" }
 
-$source = Get-Content -Path $ProcessorPath -Raw
-$requestMatch = [regex]::Match($source, '\$RequestPathPattern\s*=\s*''([^'']+)''')
-$resultMatch = [regex]::Match($source, '\$ResultPathPattern\s*=\s*''([^'']+)''')
-if (-not $requestMatch.Success) { throw 'CHAT_BRIDGE_REQUEST_PATTERN_NOT_FOUND' }
-if (-not $resultMatch.Success) { throw 'CHAT_BRIDGE_RESULT_PATTERN_NOT_FOUND' }
+$sourceLines = @(Get-Content -Path $ProcessorPath)
+$requestLine = @($sourceLines | Where-Object { $_ -like '$RequestPathPattern = *' })
+$resultLine = @($sourceLines | Where-Object { $_ -like '$ResultPathPattern = *' })
+if ($requestLine.Count -ne 1) { throw "CHAT_BRIDGE_REQUEST_PATTERN_LINE_COUNT=$($requestLine.Count)" }
+if ($resultLine.Count -ne 1) { throw "CHAT_BRIDGE_RESULT_PATTERN_LINE_COUNT=$($resultLine.Count)" }
 
-$requestPattern = $requestMatch.Groups[1].Value
-$resultPattern = $resultMatch.Groups[1].Value
+$requestPattern = (($requestLine[0] -split '=',2)[1]).Trim().Trim("'")
+$resultPattern = (($resultLine[0] -split '=',2)[1]).Trim().Trim("'")
 
 $validRequests = @(
     '.gace-control/requests/req-chat-kb-e2e-search-001.json',
