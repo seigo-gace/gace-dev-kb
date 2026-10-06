@@ -363,13 +363,44 @@ Implemented and GitHub-CI covered on the generalized receive branch:
 - actual Windows Scheduled Task registration/startup/uninstall CI gate;
 - existing BM25/Vector/Hybrid/KG/MCP reusable gates.
 
-Not yet claimed as real-PC PASS:
+Real-PC generalized Catalog runtime is now verified:
 
-The generalized transported Catalog snapshot has not yet been genuinely delivered and activated through the installed Master-PC MVS runtime. Scheduled receiver task installation and its actual periodic shallow/Deep state have also not been verified on Master PC.
+- Fresh012 completed transport → admission → ACTIVE → processed on the intended Master PC;
+- Current runtime projection verified 720 reusable Knowledge Units byte-for-byte;
+- real MCP exact BM25, Vector, Hybrid, Case/Relationship sidecar and KG gates passed;
+- Deep runtime health passed with `VERIFY=FRESH012_KB_ACTIVE_DEEP_HEALTH_PASS`.
 
-Those environment-specific gates remain required before PR #3 can be complete/merge-ready.
+ModuleCatalog receiver Scheduled Task installation/periodic state remains a separate operational choice and is not inferred from that E2E.
 
-## 19. Future boundary
+## 19. CHAT GitHub KB bridge
+
+GPT CHAT must be able to reuse this KB through GitHub without a direct network path to the Master-PC MCP stdio process.
+
+```text
+GPT CHAT
+→ dedicated GitHub control branch request
+→ Master-PC watcher
+→ existing active G-ACE KB MCP/search runtime
+→ bounded GitHub result
+→ GPT CHAT
+```
+
+Rules:
+
+- this repository builds and proves the bridge first;
+- only real-E2E-PASS capability is moved through the GitHub Project for shared/common use;
+- the bridge creates no second search engine or canonical store;
+- `search` can invoke only the fixed MCP `search_code` surface with bm25/vector/hybrid;
+- `exact` can read only the active Current reusable metadata and related Case/Relationship sidecars;
+- requests cannot name arbitrary executables, shell commands, filesystem paths or MCP tools;
+- GitHub is a control/transport layer, never KB truth;
+- source/Main/ModuleCatalog/TGserver/KB activation state are not mutated by a query.
+
+Completion requires a real CHAT-created GitHub search request, Master-PC MCP result publication, CHAT readback, a second exact-data request/readback, and then an installed watcher task proving a new request can complete without Master manually running the worker.
+
+See `docs/CHAT_GITHUB_KB_BRIDGE.md`.
+
+## 20. Future boundary
 
 TGserver-linked generic knowledge processing/admission and unrelated Astera-oriented KB architecture remain separate scopes unless explicitly integrated through a verified contract.
 
