@@ -1,5 +1,6 @@
 param(
-    [string]$ProcessorPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\process-gace-kb-chat-github-bridge-windows.ps1')
+    [string]$ProcessorPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\process-gace-kb-chat-github-bridge-windows.ps1'),
+    [string]$TaskInstallerPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\configure-gace-kb-chat-github-bridge-task-windows.ps1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,6 +10,7 @@ if (-not (Test-Path $ProcessorPath)) { throw "CHAT_BRIDGE_PROCESSOR_MISSING=$Pro
 $requestPattern = '^[.]gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
 $resultPattern = '^[.]gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
 $source = Get-Content -Path $ProcessorPath -Raw
+$taskInstallerSource = Get-Content -Path $TaskInstallerPath -Raw
 
 if (-not $source.Contains($requestPattern)) { throw 'CHAT_BRIDGE_REQUEST_FILTER_SOURCE_MISMATCH' }
 if (-not $source.Contains($resultPattern)) { throw 'CHAT_BRIDGE_RESULT_FILTER_SOURCE_MISMATCH' }
@@ -49,4 +51,8 @@ foreach ($path in $invalidResults) {
     if ($path -match $resultPattern) { throw "CHAT_BRIDGE_INVALID_RESULT_ACCEPTED=$path" }
 }
 
+if (-not $taskInstallerSource.Contains("`$TaskPath = '\'")) { throw 'CHAT_BRIDGE_TASK_ROOT_PATH_INVALID' }
+if ($taskInstallerSource.Contains("`$TaskPath = '\\'")) { throw 'CHAT_BRIDGE_TASK_ROOT_PATH_DOUBLE_SEPARATOR' }
+
 Write-Host 'GACE_KB_CHAT_PATH_FILTER=PASS'
+Write-Host 'GACE_KB_CHAT_TASK_PATH=PASS'
