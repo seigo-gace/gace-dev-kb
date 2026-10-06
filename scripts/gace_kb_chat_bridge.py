@@ -16,6 +16,7 @@ from pathlib import Path
 SCHEMA_REQUEST = "gace.kb.chat-request.v1"
 SCHEMA_RESULT = "gace.kb.chat-result.v1"
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 ALLOWED_MODES = {"bm25", "vector", "hybrid"}
 WINDOWS_SAFE_ENV = {
     "MCP_VECTOR_SEARCH_DISABLE_MULTIPROCESSING": "1",
@@ -61,12 +62,27 @@ def validate_request(value: dict) -> dict:
     action = str(value.get("action") or "")
     if action not in {"search", "exact"}:
         raise RuntimeError("BRIDGE_ACTION_INVALID")
+    requester_repository = str(value.get("requester_repository") or "").strip()
+    requester_project = str(value.get("requester_project") or "").strip()
+    requester_change_unit = str(value.get("requester_change_unit") or "").strip()
+    if requester_repository and not REPOSITORY_RE.fullmatch(requester_repository):
+        raise RuntimeError("BRIDGE_REQUESTER_REPOSITORY_INVALID")
+    if len(requester_project) > 200:
+        raise RuntimeError("BRIDGE_REQUESTER_PROJECT_INVALID")
+    if len(requester_change_unit) > 300:
+        raise RuntimeError("BRIDGE_REQUESTER_CHANGE_UNIT_INVALID")
     normalized = {
         "schema_version": SCHEMA_REQUEST,
         "request_id": request_id,
         "action": action,
         "requested_by": str(value.get("requested_by") or "gpt-chat"),
     }
+    if requester_repository:
+        normalized["requester_repository"] = requester_repository
+    if requester_project:
+        normalized["requester_project"] = requester_project
+    if requester_change_unit:
+        normalized["requester_change_unit"] = requester_change_unit
     if action == "search":
         query = str(value.get("query") or "").strip()
         mode = str(value.get("mode") or "hybrid").lower()
@@ -201,6 +217,9 @@ def result_envelope(request: dict, status: str, payload: dict | None = None, err
         "action": request["action"],
         "status": status,
         "requested_by": request.get("requested_by", "gpt-chat"),
+        "requester_repository": request.get("requester_repository"),
+        "requester_project": request.get("requester_project"),
+        "requester_change_unit": request.get("requester_change_unit"),
         "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     if payload is not None:
