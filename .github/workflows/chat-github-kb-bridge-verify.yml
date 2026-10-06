@@ -32,7 +32,8 @@ jobs:
           $files = @(
             'scripts/process-gace-kb-chat-github-bridge-windows.ps1',
             'scripts/watch-gace-kb-chat-github-bridge-windows.ps1',
-            'scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1'
+            'scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1',
+            '.gace-control/command-validation/master-pc-chat-kb-bridge-e2e.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
