@@ -1,0 +1,12 @@
+{
+  "schema_version": "gace.kb.chat-request.v1",
+  "request_id": "req-crossrepo-debugai-001",
+  "action": "search",
+  "query": "false pass detection targeted regression reusable skill",
+  "mode": "hybrid",
+  "limit": 5,
+  "requested_by": "gpt-chat",
+  "requester_repository": "seigo-gace/debug-ai",
+  "requester_project": "DebugAI",
+  "requester_change_unit": "shared-kb-reuse-proof"
+}
