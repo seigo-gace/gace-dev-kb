@@ -15,7 +15,7 @@ foreach ($command in @('Register-ScheduledTask','Unregister-ScheduledTask','Star
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "CHAT_BRIDGE_TASK_COMMAND_MISSING=$command" }
 }
 
-$TaskPath = '\\'
+$TaskPath = '\'
 $TaskName = 'G-ACE-KB-ChatGitHubBridge'
 $Repo = Join-Path $Root 'repo'
 $Watcher = Join-Path $Repo 'scripts\\watch-gace-kb-chat-github-bridge-windows.ps1'
