@@ -17,7 +17,7 @@ $Relationships = Join-Path $CurrentReusable 'relationships.jsonl'
 $Cases = Join-Path $CurrentReusable 'cases.jsonl'
 $ScratchRoot = Join-Path $Root 'data\\knowledge-intake\\chat-bridge\\tmp'
 $RemoteRef = "refs/remotes/origin/$ControlBranch"
-$RequestPathPattern = '^\.gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+$RequestPathPattern = '^[.]gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
 foreach ($path in @($Repo,$RuntimePython,$Bridge,$SearchRoot,$Metadata,$Relationships,$Cases)) {
     if (-not (Test-Path $path)) { throw "CHAT_BRIDGE_REQUIRED_PATH_MISSING=$path" }
 }
@@ -47,11 +47,11 @@ $fetchSpec = ('refs/heads/{0}:{1}' -f $ControlBranch,$RemoteRef)
 Invoke-Git @('fetch','--no-tags','origin',$fetchSpec) | Out-Null
 $requestPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/requests') |
-        Where-Object { $_ -match '^\.gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $RequestPathPattern }
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -125,7 +125,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -269,7 +269,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -340,7 +340,7 @@ foreach ($requestPath in $pending) {
 
 Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pending.Count - $processed)"
 
-$ResultPathPattern = '^\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+$ResultPathPattern = '^[.]gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
 foreach ($path in @($Repo,$RuntimePython,$Bridge,$SearchRoot,$Metadata,$Relationships,$Cases)) {
     if (-not (Test-Path $path)) { throw "CHAT_BRIDGE_REQUIRED_PATH_MISSING=$path" }
 }
@@ -370,11 +370,11 @@ $fetchSpec = ('refs/heads/{0}:{1}' -f $ControlBranch,$RemoteRef)
 Invoke-Git @('fetch','--no-tags','origin',$fetchSpec) | Out-Null
 $requestPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/requests') |
-        Where-Object { $_ -match '^\.gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $RequestPathPattern }
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -448,7 +448,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -592,7 +592,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -693,11 +693,11 @@ $fetchSpec = ('refs/heads/{0}:{1}' -f $ControlBranch,$RemoteRef)
 Invoke-Git @('fetch','--no-tags','origin',$fetchSpec) | Out-Null
 $requestPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/requests') |
-        Where-Object { $_ -match '^\.gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $RequestPathPattern }
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -771,7 +771,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
@@ -915,7 +915,7 @@ Write-Host "GACE_KB_CHAT_GITHUB_BRIDGE=PASS PROCESSED=$processed PENDING=$($pend
 )
 $resultPaths = @(
     Invoke-Git @('ls-tree','-r','--name-only',$RemoteRef,'--','.gace-control/results') |
-        Where-Object { $_ -match '^\\.gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$' }
+        Where-Object { $_ -match $ResultPathPattern }
 )
 $resultSet = @{}
 foreach ($path in $resultPaths) { $resultSet[$path] = $true }
