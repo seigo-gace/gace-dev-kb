@@ -7,8 +7,8 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $ProcessorPath)) { throw "CHAT_BRIDGE_PROCESSOR_MISSING=$ProcessorPath" }
 
 $source = Get-Content -Path $ProcessorPath -Raw
-$requestMatch = [regex]::Match($source, "\$RequestPathPattern\s*=\s*'([^']+)'")
-$resultMatch = [regex]::Match($source, "\$ResultPathPattern\s*=\s*'([^']+)'")
+$requestMatch = [regex]::Match($source, '\$RequestPathPattern\s*=\s*''([^'']+)''')
+$resultMatch = [regex]::Match($source, '\$ResultPathPattern\s*=\s*''([^'']+)''')
 if (-not $requestMatch.Success) { throw 'CHAT_BRIDGE_REQUEST_PATTERN_NOT_FOUND' }
 if (-not $resultMatch.Success) { throw 'CHAT_BRIDGE_RESULT_PATTERN_NOT_FOUND' }
 
