@@ -23,8 +23,9 @@ jobs:
 
       - name: Python syntax and unit gates
         run: |
-          python -m py_compile scripts/gace_kb_chat_bridge.py tests/test_gace_kb_chat_bridge.py
+          python -m py_compile scripts/gace_kb_chat_bridge.py scripts/tgserver_zero_kb_log.py tests/test_gace_kb_chat_bridge.py tests/test_tgserver_zero_kb_log.py
           python -B tests/test_gace_kb_chat_bridge.py
+          python -B tests/test_tgserver_zero_kb_log.py
 
       - name: PowerShell parser gates
         shell: pwsh
@@ -72,6 +73,8 @@ jobs:
         run: |
           python -B tests/test_gace_kb_chat_bridge.py
           if ($LASTEXITCODE -ne 0) { throw "CHAT_BRIDGE_WINDOWS_PYTHON_FAILED=$LASTEXITCODE" }
+          python -B tests/test_tgserver_zero_kb_log.py
+          if ($LASTEXITCODE -ne 0) { throw "TGSERVER_ZERO_KB_LOG_WINDOWS_PYTHON_FAILED=$LASTEXITCODE" }
 
       - name: Windows PowerShell parser gates
         shell: powershell
