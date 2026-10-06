@@ -6,14 +6,12 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $ProcessorPath)) { throw "CHAT_BRIDGE_PROCESSOR_MISSING=$ProcessorPath" }
 
-$sourceLines = @(Get-Content -Path $ProcessorPath)
-$requestLine = @($sourceLines | Where-Object { $_ -like '$RequestPathPattern = *' })
-$resultLine = @($sourceLines | Where-Object { $_ -like '$ResultPathPattern = *' })
-if ($requestLine.Count -ne 1) { throw "CHAT_BRIDGE_REQUEST_PATTERN_LINE_COUNT=$($requestLine.Count)" }
-if ($resultLine.Count -ne 1) { throw "CHAT_BRIDGE_RESULT_PATTERN_LINE_COUNT=$($resultLine.Count)" }
+$requestPattern = '^[.]gace-control/requests/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
+$resultPattern = '^[.]gace-control/results/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json$'
+$source = Get-Content -Path $ProcessorPath -Raw
 
-$requestPattern = (($requestLine[0] -split '=',2)[1]).Trim().Trim("'")
-$resultPattern = (($resultLine[0] -split '=',2)[1]).Trim().Trim("'")
+if (-not $source.Contains($requestPattern)) { throw 'CHAT_BRIDGE_REQUEST_FILTER_SOURCE_MISMATCH' }
+if (-not $source.Contains($resultPattern)) { throw 'CHAT_BRIDGE_RESULT_FILTER_SOURCE_MISMATCH' }
 
 $validRequests = @(
     '.gace-control/requests/req-chat-kb-e2e-search-001.json',
@@ -39,16 +37,16 @@ $invalidResults = @(
 )
 
 foreach ($path in $validRequests) {
-    if ($path -notmatch $requestPattern) { throw "CHAT_BRIDGE_VALID_REQUEST_REJECTED=$path PATTERN=$requestPattern" }
+    if ($path -notmatch $requestPattern) { throw "CHAT_BRIDGE_VALID_REQUEST_REJECTED=$path" }
 }
 foreach ($path in $invalidRequests) {
-    if ($path -match $requestPattern) { throw "CHAT_BRIDGE_INVALID_REQUEST_ACCEPTED=$path PATTERN=$requestPattern" }
+    if ($path -match $requestPattern) { throw "CHAT_BRIDGE_INVALID_REQUEST_ACCEPTED=$path" }
 }
 foreach ($path in $validResults) {
-    if ($path -notmatch $resultPattern) { throw "CHAT_BRIDGE_VALID_RESULT_REJECTED=$path PATTERN=$resultPattern" }
+    if ($path -notmatch $resultPattern) { throw "CHAT_BRIDGE_VALID_RESULT_REJECTED=$path" }
 }
 foreach ($path in $invalidResults) {
-    if ($path -match $resultPattern) { throw "CHAT_BRIDGE_INVALID_RESULT_ACCEPTED=$path PATTERN=$resultPattern" }
+    if ($path -match $resultPattern) { throw "CHAT_BRIDGE_INVALID_RESULT_ACCEPTED=$path" }
 }
 
-Write-Host "GACE_KB_CHAT_PATH_FILTER=PASS REQUEST_PATTERN=$requestPattern RESULT_PATTERN=$resultPattern"
+Write-Host 'GACE_KB_CHAT_PATH_FILTER=PASS'
