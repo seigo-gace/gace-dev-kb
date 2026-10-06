@@ -1,141 +1,306 @@
 # G-ACE Dev KB — Project Tree
 
-This file is the navigation map for the repository. Update it when files are added, removed, moved, or when a major responsibility changes.
+This file is the repository navigation map. Update it whenever files are added/removed/moved or a major responsibility changes.
 
 ## Current repository tree
 
 ```text
 gace-dev-kb/
 ├─ README.md
+├─ config/
+│  └─ accepted-knowledge-sources.json
 ├─ docs/
 │  ├─ CURRENT_DESIGN.md
 │  ├─ PROJECT_TREE.md
-│  └─ DESIGN_DELTA.md
+│  ├─ DESIGN_DELTA.md
+│  ├─ REUSABLE_ASSET_KB_CONTRACT.md
+│  ├─ MODULECATALOG_KB_INTAKE_RUNTIME.md
+│  ├─ MODULECATALOG_KB_RETENTION.md
+│  └─ CHAT_GITHUB_KB_BRIDGE.md
+├─ .github/workflows/
+│  ├─ reusable-asset-kb-verify.yml
+│  └─ chat-github-kb-bridge-verify.yml
 ├─ scripts/
 │  ├─ bootstrap-mvs-windows.ps1
+│  ├─ patch-mvs-windows-trial-safety.ps1
 │  ├─ gace_knowledge_adapter.py
 │  ├─ export-knowledge-windows.ps1
 │  ├─ combine_knowledge_records.py
 │  ├─ render_knowledge_corpus.py
 │  ├─ index-knowledge-windows.ps1
+│  ├─ import_verified_modulecatalog_skills.py
+│  ├─ promote-verified-skills-to-formal-kb-windows.ps1
+│  ├─ test-debugai-verified-skill-kb-windows.ps1
 │  ├─ test-mcp-knowledge-e2e-windows.ps1
-│  └─ test-cross-repo-reuse-windows.ps1
+│  ├─ test-cross-repo-reuse-windows.ps1
+│  │
+│  ├─ import_modulecatalog_reusable_export.py
+│  ├─ import_reusable_asset_bundle.py
+│  ├─ accept_modulecatalog_delivery.py
+│  ├─ enrich_modulecatalog_search_corpus.py
+│  ├─ copy_preserved_kb_runtime_corpus.py
+│  ├─ prefix_modulecatalog_runtime_links.py
+│  ├─ runtime_corpus_integrity.py
+│  ├─ verify_modulecatalog_runtime_projection.py
+│  ├─ replace_modulecatalog_reusable_snapshot.py
+│  ├─ receive-modulecatalog-kbdata-windows.ps1
+│  ├─ process-modulecatalog-inbox-windows.ps1
+│  ├─ activate-modulecatalog-accepted-windows.ps1
+│  ├─ recover-modulecatalog-activation-windows.ps1
+│  ├─ check-modulecatalog-kb-runtime-windows.ps1
+│  ├─ prune-modulecatalog-kb-retention-windows.ps1
+│  ├─ watch-modulecatalog-kb-inbox-windows.ps1
+│  ├─ configure-modulecatalog-kb-receiver-task-windows.ps1
+│  ├─ gace_kb_chat_bridge.py
+│  ├─ process-gace-kb-chat-github-bridge-windows.ps1
+│  ├─ watch-gace-kb-chat-github-bridge-windows.ps1
+│  ├─ configure-gace-kb-chat-github-bridge-task-windows.ps1
+│  │
+│  ├─ run_modulecatalog_reusable_export.mjs          # producer compatibility test helper only
+│  ├─ test-modulecatalog-reusable-export-windows.ps1 # isolated/contract test helper
+│  └─ promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1 # transition helper; not inbox runtime entry
 ├─ tests/
 │  ├─ verify-mvs-windows.ps1
 │  ├─ regression-mvs-windows.ps1
 │  ├─ test_gace_knowledge_adapter.py
 │  ├─ test_combine_knowledge_records.py
+│  ├─ test_import_verified_modulecatalog_skills.py
 │  ├─ test_render_knowledge_corpus.py
 │  ├─ bm25_knowledge_retention_probe.py
 │  ├─ mcp_knowledge_client_e2e.py
-│  └─ mcp_cross_repo_reuse_e2e.py
-└─ .gitignore                  # local untracked evidence; intentionally not modified here
+│  ├─ mcp_verified_skill_trial_e2e.py
+│  ├─ mcp_cross_repo_reuse_e2e.py
+│  │
+│  ├─ mcp_reusable_asset_e2e.py
+│  ├─ test_import_modulecatalog_reusable_export.py
+│  ├─ test_import_reusable_asset_bundle.py
+│  ├─ test_accept_modulecatalog_delivery.py
+│  ├─ test_replace_modulecatalog_reusable_snapshot.py
+│  ├─ test_enrich_modulecatalog_search_corpus.py
+│  ├─ test_copy_preserved_kb_runtime_corpus.py
+│  ├─ test_prefix_modulecatalog_runtime_links.py
+│  ├─ test_runtime_corpus_integrity.py
+│  ├─ test_modulecatalog_inbox_lifecycle.ps1
+│  ├─ test_modulecatalog_transport_readiness.ps1
+│  ├─ test_modulecatalog_receiver_timeout.ps1
+│  ├─ test_modulecatalog_duplicate_delivery_archive.ps1
+│  ├─ test_modulecatalog_activation_recovery.ps1
+│  ├─ test_modulecatalog_runtime_health_lock.ps1
+│  ├─ test_modulecatalog_receiver_service.ps1
+│  ├─ test_modulecatalog_receiver_backoff.ps1
+│  ├─ test_modulecatalog_retention.ps1
+│  └─ test_gace_kb_chat_bridge.py
+└─ .gitignore                  # local untracked evidence on Master PC; intentionally untouched
 ```
 
-## Responsibilities
+## Entry documents
 
 ### `README.md`
-Mandatory entry point. Shows current validated status and links to design, tree, delta, and system documents.
+Mandatory entry point. Separates the historical Master-PC validated baseline from the generalized transported-asset receive/runtime status.
 
 ### `docs/CURRENT_DESIGN.md`
-Current design baseline and responsibility boundaries. Do not rewrite it merely to hide implementation drift.
-
-### `docs/PROJECT_TREE.md`
-Repository navigation and file/directory responsibilities.
+Current design baseline. Defines producer/consumer authority, single-Current runtime, projection v2, transport lifecycle, activation/rollback, continuous receiver, shallow/Deep health and retention boundaries.
 
 ### `docs/DESIGN_DELTA.md`
-Append-only-style design change record: baseline difference, reason, evidence, and applying commit.
+Historical design-change record. Do not rewrite older evidence merely because the current design moved forward.
 
-### `scripts/bootstrap-mvs-windows.ps1`
-Repository-managed Windows bootstrap for pinned `mcp-vector-search==4.1.14` plus measured compatibility changes. Current handling includes the `resource` guard, display fallback, Kuzu path compatibility, Windows multiprocessing `spawn`, MCP SDK 2.x compatibility, embedding-dimension API compatibility, atomic BM25 backend reopen after rebuild, and doc-only KG search compatibility.
+### `docs/REUSABLE_ASSET_KB_CONTRACT.md`
+Detailed `gace.reusable-asset.v1` consumer contract: data semantics, admission, runtime projection, Current authority and completion definition.
 
-### `tests/verify-mvs-windows.ps1`
-Verifies installed Windows compatibility state, CLI startup, actual `_get_mp_context()` result, MCP server creation compatibility, embedding API patch, atomic BM25 reopen patch, and doc-only KG patch. Current Master Windows result includes `MVS_WINDOWS_MP_CONTEXT=spawn`, `MVS_MCP_SDK2_COMPAT=PASS`, `MVS_EMBEDDING_DIMENSION_API=PASS`, `MVS_ATOMIC_BM25_BACKEND_REOPEN=PASS`, `MVS_DOC_ONLY_KG_ENHANCEMENT=PASS`, and `MVS_WINDOWS_COMPAT_VERIFY=PASS`.
+### `docs/MODULECATALOG_KB_INTAKE_RUNTIME.md`
+Operational Windows receive-to-runtime specification: inbox lifecycle, locks, timeout/retry, receiver service, activation transaction, graph projection, byte-exact runtime projection health, periodic Deep MCP health and retention commands.
 
-### `tests/regression-mvs-windows.ps1`
-Runs the real tracked-KB-corpus regression: preflight, temporary `respect_gitignore` isolation, full reindex, knowledge-graph validation, status, two semantic searches, and restoration of the prior setting. Current Master Windows result: `MVS_REAL_REGRESSION=PASS`.
+### `docs/MODULECATALOG_KB_RETENTION.md`
+Bounded operational backup/archive policy. Defines protected Current/rollback authority, retention counts, safe-root deletion boundaries and dry-run behavior.
+
+### `docs/CHAT_GITHUB_KB_BRIDGE.md`
+CHAT↔GitHub↔Master-PC KB control-plane contract. Defines the narrow search/exact request schema, security boundary, real-E2E completion gate, and the rule that this project proves the capability before GitHub Project commonization.
+
+## Baseline repository/history path
 
 ### `scripts/gace_knowledge_adapter.py`
-Deterministic Git repository → G-ACE knowledge-record projection. Reads committed Git evidence and emits `type`, `repository`, `commit`, `summary`, `cause`, `fix`, `validation`, `source`. Full repository history is exported by default; bounded `--max-count` is only explicit test/temporary behavior. It does not create another MCP server and does not replace Git authority.
-
-### `tests/test_gace_knowledge_adapter.py`
-Standard-library unit tests for adapter classification, explicit evidence-marker parsing, tracked-tree cleanliness, handling of untracked local files, JSONL contract output, and full-history retention semantics.
+Deterministic committed-Git → eight-field Knowledge Record adapter. Git remains repository-history authority.
 
 ### `scripts/export-knowledge-windows.ps1`
-Windows wrapper for the adapter. Writes generated JSONL outside Git source to `F:\G-ACE-KB\data\knowledge-records\gace-dev-kb.jsonl`. The durable default is full reachable history.
+Writes repository-derived generated JSONL outside Git source.
 
 ### `scripts/combine_knowledge_records.py`
-Deterministically combines multiple G-ACE JSONL exports, preserves the initial knowledge contract, deduplicates identical repository/commit/type records, and fails if the resulting corpus does not contain at least two repository identities. It does not synthesize or reconcile evidence.
-
-### `tests/test_combine_knowledge_records.py`
-Unit tests for two-repository combining, duplicate suppression, and fail-closed contract/repository-count behavior. Current Master Windows result: 3/3 PASS.
+Combines formal record inputs while preserving distinct source identity.
 
 ### `scripts/render_knowledge_corpus.py`
-Converts generated JSONL records into one deterministic Markdown document per knowledge record under the external generated-data boundary. Missing evidence is represented without synthesis.
-
-### `tests/test_render_knowledge_corpus.py`
-Validates one-record-per-file rendering, contract preservation, evidence content, and fail-closed behavior for incomplete record shapes. Current Master Windows result: 2/2 PASS.
-
-### `tests/bm25_knowledge_retention_probe.py`
-Directly loads the persisted BM25 index below the CLI rendering layer, searches for a known full commit ID, resolves the returned chunk in LanceDB, and verifies that the actual indexed chunk contains the expected commit evidence. This separates durable BM25 retention validation from CLI display behavior.
+Deterministic eight-field record → Markdown runtime projection.
 
 ### `scripts/index-knowledge-windows.ps1`
-Runs the real generated-knowledge pipeline: verify/repair pinned Windows MVS compatibility → export full committed knowledge history → render external Markdown corpus → initialize/reuse external `mcp-vector-search` project → force-index → verify exact indexed-file count → require BM25 index → run direct BM25 retention probes for the known Kuzu and G-ACE adapter records → fail closed on previously observed warning regressions.
+Formal Windows index pipeline using the existing pinned MVS runtime and real MCP retrieval gates.
 
-Latest Master Windows result: 89 records, 89/89 indexed files, 625 chunks/embeddings, 534 KG entities / 533 relationships, both direct BM25 probes PASS, all three warning regression gates PASS, and `GACE_KNOWLEDGE_INDEX=PASS RECORDS=89`.
+### `scripts/bootstrap-mvs-windows.ps1` / `scripts/patch-mvs-windows-trial-safety.ps1`
+Install/repair/verify measured MVS Windows compatibility and bounded trial/runtime execution behavior.
 
-### `tests/mcp_knowledge_client_e2e.py`
-Real MCP protocol client test. Launches `mcp-vector-search` over stdio using the runtime Python, initializes an MCP `ClientSession`, validates server metadata, lists tools, calls `get_project_status`, and calls `search_code` for known `74e8171...` and `4912a442...` records. Current Master Windows result: `GACE_MCP_CLIENT_E2E=PASS`.
+## Legacy verified-source path
 
-### `scripts/test-mcp-knowledge-e2e-windows.ps1`
-One-command Windows wrapper for the MCP stdio client E2E against `F:\G-ACE-KB\data\knowledge-search`. Current Master Windows result: `GACE_MCP_WINDOWS_E2E=PASS`.
+### `config/accepted-knowledge-sources.json`
+Legacy accepted-source registry used by the already-validated 13-record DebugAI source path. It is not the generalized ModuleCatalog transport inbox.
 
-### `tests/mcp_cross_repo_reuse_e2e.py`
-Generic real MCP stdio cross-repository retrieval test. It accepts repeated query/commit/repository checks and requires successful retrieval from at least two distinct repository identities. The Windows child-process stderr path uses a real temporary file so the test is compatible with Windows subprocess handle requirements.
+### `scripts/import_verified_modulecatalog_skills.py`
+Conservative importer for the previously verified 13 exported symbols.
 
-### `scripts/test-cross-repo-reuse-windows.ps1`
-One-command temporary cross-repository E2E. It verifies the runtime, shallow-clones public `seigo-gace/Astera` into an OS temp directory, exports the current repository plus Astera, combines records, renders and indexes a temporary corpus, verifies exact index count, retrieves a known record from each repository through real MCP, and removes the temporary workspace on completion. Current Master Windows result: `GACE_CROSS_REPO_REUSE_E2E=PASS RECORDS=90 REPOSITORIES=2` and `CROSS_REPO_TEMP_CLEANUP=PASS`.
+### `scripts/promote-verified-skills-to-formal-kb-windows.ps1`
+Previously validated 107-record formal promotion wrapper. Historical baseline, not the generalized transport receiver.
+
+### `scripts/test-debugai-verified-skill-kb-windows.ps1` / `tests/mcp_verified_skill_trial_e2e.py`
+Isolated real-Windows reusable retrieval proof for the legacy 13-record source.
+
+## Generalized ModuleCatalog reusable-asset receive path
+
+### `scripts/import_modulecatalog_reusable_export.py`
+`gace.reusable-asset.v1` consumer/importer. Re-verifies manifests/hashes/schema/provenance/cardinality/relations and builds rich Knowledge Unit metadata + compatibility records + Markdown corpus.
+
+### `scripts/import_reusable_asset_bundle.py`
+Generic reusable-asset bundle compatibility importer used by contract/regression coverage.
+
+### `scripts/accept_modulecatalog_delivery.py`
+KB admission boundary for an already-transported delivery. Produces projection schema v2 and an ACCEPTED receipt/state only after full validation. Replays are revalidated rather than trusting cached authority.
+
+### `scripts/enrich_modulecatalog_search_corpus.py`
+Adds runtime-only MVS frontmatter/tags/related links to the local derived corpus. It consults the full accepted relationship sidecar so Asset-level/future relation kinds are not limited to relations embedded by the importer. Canonical transported files remain unchanged.
+
+### `scripts/copy_preserved_kb_runtime_corpus.py`
+Copies the existing non-Catalog runtime corpus into staging without degrading rich existing Markdown content.
+
+### `scripts/prefix_modulecatalog_runtime_links.py`
+Rewrites runtime-only `related:` targets after Catalog filename prefixing so MVS KG links resolve in the staged/current corpus.
+
+### `scripts/runtime_corpus_integrity.py`
+Builds a deterministic manifest of the actual active prefixed ModuleCatalog Markdown corpus using sorted filename, byte size and SHA-256 entries plus a canonical aggregate SHA-256. It fails closed on empty/wrong-count projections.
+
+### `scripts/verify_modulecatalog_runtime_projection.py`
+Reconstructs the allowed accepted-snapshot → live-runtime transform in memory — commit-prefixed filenames plus prefixed frontmatter `related:` targets — and requires the actual live ModuleCatalog Markdown files to match the expected filename set and bytes exactly.
+
+### `scripts/replace_modulecatalog_reusable_snapshot.py`
+Builds the next formal record set while keeping one Current ModuleCatalog reusable snapshot and preserving non-Catalog knowledge.
+
+### `scripts/receive-modulecatalog-kbdata-windows.ps1`
+One-delivery receive orchestrator. Owns `receive.lock`, recovery-before-activation, stale replay rejection, idempotent ACTIVE deep health, activation and final Current health.
+
+### `scripts/process-modulecatalog-inbox-windows.ps1`
+Standard inbox processor. Owns transport-completeness preflight, `ready → processing`, resume/retry/failure/processed archive lifecycle, bounded receiver timeout, Windows process-tree termination, duplicate delivery replay preservation and processor serialization.
+
+### `scripts/activate-modulecatalog-accepted-windows.ps1`
+Uses the existing BM25/Vector/KG/MCP runtime to build staging, run regressions, replace Current atomically, preserve structured relationship/case authority and perform post-cutover MCP verification.
+
+### `scripts/recover-modulecatalog-activation-windows.ps1`
+Resolves an interrupted PREPARED activation transaction before another activation proceeds.
+
+### `scripts/check-modulecatalog-kb-runtime-windows.ps1`
+Non-mutating Current integrity/health gate. In addition to authority/hash/count/index checks, it invokes the accepted-to-live projection verifier so silent live Markdown drift fails shallow health. `-Deep` reruns repository-history and reusable BM25/Vector/Hybrid/KG MCP checks.
+
+### `scripts/prune-modulecatalog-kb-retention-windows.ps1`
+Serialized operational cleanup. Bounds rollback/search backups and processed/failed/accepted archives while protecting Current and immediate rollback authority and refusing deletion outside approved data roots.
+
+### `scripts/watch-modulecatalog-kb-inbox-windows.ps1`
+Continuous singleton inbox consumer with heartbeat/failure JSONL, bounded rotation, retry backoff, shallow Current health (default 300 seconds), Deep MCP health (default 21600 seconds / 6 hours) and periodic retention.
+
+### `scripts/configure-modulecatalog-kb-receiver-task-windows.ps1`
+Windows Scheduled Task installer source. Registers a current-user Limited AtLogOn receiver with persisted shallow/Deep health cadences, retention policy and bounded restart behavior. Explicit `RuntimeHealthSeconds=0` without an explicit Deep value disables both health cadences for compatibility. Repository presence does not mean the Master-PC task is installed.
+
+## CHAT GitHub KB bridge path
+
+### `scripts/gace_kb_chat_bridge.py`
+Read-only bridge executor. `search` is fixed to the existing MCP `search_code` tool; `exact` resolves one unique Current `knowledge_id` and returns structured metadata plus related Case/Relationship sidecars.
+
+### `scripts/process-gace-kb-chat-github-bridge-windows.ps1`
+One-shot GitHub control-branch processor. Fetches strict request paths, executes the local bridge, and publishes one result JSON through a temporary Git worktree without switching the main KB worktree.
+
+### `scripts/watch-gace-kb-chat-github-bridge-windows.ps1`
+Singleton polling watcher for unattended CHAT requests. Runtime state/logs stay under `F:\G-ACE-KB\data\knowledge-intake\chat-bridge`.
+
+### `scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1`
+Current-user Limited AtLogOn task installer for the bridge watcher. Real installation occurs only after one-shot GitHub round-trip E2E passes.
+
+### `tests/test_gace_kb_chat_bridge.py`
+Fail-closed request-schema and exact-retrieval unit coverage. Arbitrary action/tool execution is rejected.
+
+## Producer compatibility helpers — not operational receive path
+
+### `scripts/run_modulecatalog_reusable_export.mjs`
+Invokes the ModuleCatalog producer for CI/compatibility testing at an exact commit. Operational KB receipt does not call this helper.
+
+### `scripts/test-modulecatalog-reusable-export-windows.ps1`
+Earlier isolated Windows producer/consumer trial helper. Not the unattended inbox entry.
+
+### `scripts/promote-modulecatalog-reusable-export-to-formal-kb-windows.ps1`
+Transition-era promotion helper retained for regression/history. The current operational entry is transported delivery → receive/inbox lifecycle.
+
+## Generalized receive/runtime tests
+
+### `tests/mcp_reusable_asset_e2e.py`
+Real MCP gate for reusable data: exact BM25 all units; representative natural BM25/Vector/Hybrid; case/relationship search; KG tag/relation/dependency/links checks.
+
+### `tests/test_accept_modulecatalog_delivery.py`
+Admission, idempotency, tamper/replay and projection-v2 contract tests.
+
+### `tests/test_modulecatalog_inbox_lifecycle.ps1`
+Claim/resume/failure/retry/archive lifecycle and lock behavior.
+
+### `tests/test_modulecatalog_transport_readiness.ps1`
+Proves partially copied deliveries stay pending and do not create false multi-ready ambiguity.
+
+### `tests/test_modulecatalog_receiver_timeout.ps1`
+Proves bounded receiver timeout remains retryable and can resume successfully.
+
+### `tests/test_modulecatalog_duplicate_delivery_archive.ps1`
+Proves duplicate delivery ID replay preserves the original processed archive.
+
+### `tests/test_modulecatalog_activation_recovery.ps1`
+Hard-interruption PREPARED transaction recovery tests.
+
+### `tests/test_modulecatalog_runtime_health_lock.ps1`
+Verifies runtime health/receive lock ownership and inherited-lock mode.
+
+### `tests/test_modulecatalog_receiver_service.ps1`
+Continuous receiver one-shot/singleton/log-rotation/health behavior, including actual Deep-health invocation/event coverage.
+
+### `tests/test_modulecatalog_receiver_backoff.ps1`
+Proves a transient polling failure backs off before the next attempt instead of hot-looping and explicitly disables both shallow/Deep health in the isolated fixture.
+
+### `tests/test_modulecatalog_retention.ps1`
+Proves bounded operational retention, stale scratch cleanup, idempotency, Current protection and immediate reusable rollback protection including older ACTIVE-marker schema.
+
+### Search projection tests
+
+- `tests/test_enrich_modulecatalog_search_corpus.py` — frontmatter, dependency/containment/cross-unit/full-sidecar relationship projection.
+- `tests/test_copy_preserved_kb_runtime_corpus.py` — non-Catalog rich-corpus preservation.
+- `tests/test_prefix_modulecatalog_runtime_links.py` — runtime link target alignment plus accepted-snapshot → live-prefixed projection exact-match/tamper detection.
+- `tests/test_runtime_corpus_integrity.py` — deterministic active runtime manifest, drift, wrong-count and empty-projection failures.
+- `tests/test_replace_modulecatalog_reusable_snapshot.py` — single-Current record replacement and legacy transition.
+- `tests/test_import_modulecatalog_reusable_export.py` / `tests/test_import_reusable_asset_bundle.py` — actual/generic contract import gates.
+
+## Workflow
+
+### `.github/workflows/reusable-asset-kb-verify.yml`
+Feature-branch CI. Covers Python/Node/PowerShell syntax, transport/inbox reliability, activation recovery, receiver service/backoff/retention, rich-corpus preservation, deterministic runtime-corpus integrity, accepted-to-live exact runtime projection, projection/search regressions, periodic Deep-health behavior, legacy KB regressions, pinned real ModuleCatalog producer compatibility, and an actual Windows Scheduled Task installation/startup/uninstall gate.
+
+### `.github/workflows/chat-github-kb-bridge-verify.yml`
+Dedicated CHAT bridge CI. Runs Python request/exact unit gates and parses the one-shot processor, watcher, and Scheduled Task installer on Linux PowerShell and Windows PowerShell.
+
+CI is not a substitute for the final genuine-transport Master-PC MVS runtime gate.
 
 ## Local runtime / generated-data boundary
-
-Durable runtime/generated data remain outside Git:
 
 ```text
 F:\G-ACE-KB\
 ├─ repo\
 ├─ data\
 │  ├─ knowledge-records\
-│  └─ knowledge-search\
-├─ runtime\
-│  └─ mcp-vector-search\
+│  ├─ knowledge-search\
+│  ├─ knowledge-sources\accepted\
+│  ├─ knowledge-inbox\modulecatalog\
+│  └─ knowledge-intake\modulecatalog\
+├─ runtime\mcp-vector-search\
 ├─ assets\
 └─ .venv\
 ```
 
-Cross-repository validation uses an OS temporary directory and cleans it after a successful run.
+Generated data, inbox/archive state, indexes, runtime downloads and local environments stay outside Git source.
 
-Knowledge-data processing/admission from TGserver is a separate development scope; this repository owns the reusable KB/search/MCP side and later integration contract only.
-
-## Current validation boundary
-
-Validated:
-
-```text
-repository full history
-→ deterministic records
-→ Markdown corpus
-→ mcp-vector-search index
-→ persisted BM25 index
-→ direct BM25 commit-evidence probe
-→ MCP stdio server
-→ MCP client initialize/server-info/list-tools/status/search
-→ commit-backed semantic knowledge retrieval
-→ multi-repository combine
-→ temporary combined index
-→ real MCP retrieval from both repositories
-→ temporary workspace cleanup
-```
-
-The first-version repository knowledge reuse E2E and the measured Windows quality-hardening gates are closed. TGserver-linked knowledge processing/admission remains intentionally separate work.
-
-Do not create placeholder subsystems solely to make the tree look complete.
+Do not create placeholder subsystems merely to make the tree look complete.

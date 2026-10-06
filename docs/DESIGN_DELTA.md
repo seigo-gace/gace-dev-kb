@@ -530,3 +530,115 @@ Execution at `e76bcb32bb6244af57d9b2c0e9af3eed515454c5` produced:
 The measured Windows quality-hardening boundary is closed. The repository now retains full reachable Git history by default, proves persisted BM25 evidence directly, and validates real MCP retrieval independently of CLI presentation behavior. Local untracked `.gitignore` and pre-existing `scripts/__pycache__/` remain intentionally untouched.
 
 Knowledge-data processing/admission from TGserver is a separate development scope and is not added here.
+
+---
+
+## 2026-10-01 — verified ModuleCatalog skills admitted into the formal KB
+
+**Status:** PASS for explicit verified external-source admission and formal MCP reuse.
+
+### Previous design
+
+The validated first version could project repository history into knowledge records, combine multiple repositories in temporary validation, and retrieve those records through MCP. It did not yet have a durable, fail-closed path for admitting an already-verified reusable asset from another repository into the persistent formal KB.
+
+### Implemented/new design
+
+A narrow explicit admission path was added for already-verified ModuleCatalog assets:
+
+- `config/accepted-knowledge-sources.json` registers the exact source repository, commit, asset ID, expected skill count, admission state, and evidence boundary;
+- `scripts/import_verified_modulecatalog_skills.py` executes no asset code and verifies required files, SHA-256 manifest size/hash, normal/user evidence, exported function declarations, and expected skill count;
+- one exported function becomes one separate eight-field knowledge record with an exact `source` ending in the symbol name;
+- `scripts/combine_knowledge_records.py` now uses `repository + commit + type + source` as record identity so distinct skills at the same source commit are preserved;
+- formal repository-derived knowledge is pinned to `origin/main`, preventing feature-branch implementation commits from entering formal knowledge before merge;
+- Windows accepted-source checkouts set `core.autocrlf=false`, force checkout/reset the pinned commit, and run manifest/evidence/count preflight before expensive indexing;
+- `scripts/index-knowledge-windows.ps1` assembles `formal-kb.jsonl`, renders repository history plus rich accepted-skill Markdown into the formal corpus, reindexes BM25/vector/KG, and runs both repository-history and accepted-skill MCP retrieval gates;
+- `scripts/promote-verified-skills-to-formal-kb-windows.ps1` closes the promotion path with preflight, unit regressions, pinned revision handling, formal index execution, and final formal-output checks.
+
+### Windows defect found during promotion
+
+The first formal-promotion attempt rejected the ModuleCatalog manifest because a normal Windows checkout converted LF to CRLF. `README.md` had manifest size 587 but working-tree size 602, exactly matching the additional CR bytes introduced by 15 converted line endings. The source asset and manifest were not defective.
+
+The correction disables `core.autocrlf` for accepted-source clones, force-checks out/resets the pinned commit, and performs the same importer as a preflight before indexing. The subsequent real Windows run passed the manifest and full formal promotion.
+
+### Applying implementation/fix commits
+
+- `7cafbfa73daba8b7e0bc299f25adce0ec7f08f4e` — integrate verified external skills into the formal KB index;
+- `da1dd3bb2c5a6f562637e0cdadbf5d8c157bbf4f` — pin formal repository knowledge revision;
+- `e25ddc719042162474d6ee159e56af21c6ddd367` — add verified-skill formal KB promotion gate;
+- `21f5fbddc748f82b86b0a22b23c3e4ad7c7f406d` — preserve canonical ModuleCatalog bytes on Windows;
+- `773e31d6f6b5785bda3d02d321b2dc4a9ac4e9df` — preflight accepted-source manifests before formal indexing.
+
+### Final Master Windows evidence
+
+The validated formal promotion produced:
+
+- `FORMAL_REPOSITORY_REVISION=PASS REF=origin/main COMMIT=9520098d9666bdf33372bcd34f15758bb9c66f01`;
+- `ACCEPTED_SOURCE_REGISTRY=PASS SOURCES=1`;
+- `ACCEPTED_SOURCE_CANONICAL_CHECKOUT=PASS ... AUTOCRLF=false`;
+- `ACCEPTED_SOURCE_MANIFEST_PREFLIGHT=PASS ... RECORDS=13`;
+- combiner tests 4/4 PASS;
+- importer tests 4/4 PASS;
+- `FORMAL_KB_UNIT_GATES=PASS`;
+- repository knowledge export: 94 records;
+- accepted source import: 13 records from ModuleCatalog commit `bd258ec91b6970853d14a7bf4e65731312a487e3`;
+- `GACE_KNOWLEDGE_COMBINE=PASS RECORDS=107 REPOSITORIES=2`;
+- `GACE_FORMAL_CORPUS=PASS RECORDS=107 CORPUS=107`;
+- full formal reindex: 107 files / 1,167 chunks / 1,167 embeddings;
+- formal knowledge graph: 957 entities / 979 relationships;
+- status: 107/107 indexed;
+- both historical direct BM25 probes PASS;
+- real MCP repository-history retrieval PASS for `74e8171...` and `4912a442...`;
+- real MCP retrieval PASS for all 13 accepted DebugAI skill symbols;
+- natural-language skill discovery PASS for cross-file dependency tracing, false-pass detection, and targeted regression strategy;
+- `GACE_DEBUGAI_SKILL_MCP_E2E=PASS RECORDS=13 NATURAL_CHECKS=3`;
+- `MVS_BM25_WARNING_REGRESSION=PASS`;
+- `MVS_EMBEDDING_FUTUREWARNING_REGRESSION=PASS`;
+- `MVS_DOC_ONLY_KG_WARNING_REGRESSION=PASS`;
+- `GACE_KNOWLEDGE_INDEX=PASS RECORDS=107`;
+- `GACE_FORMAL_KB_PROMOTION=PASS RECORDS=107`.
+
+### Evidence boundary retained
+
+The accepted ModuleCatalog source states that its local Skill Engine and repository tests passed, but current DebugAI AI Core real-LLM Skill ON/OFF A/B has not been executed. The formal KB stores that boundary and does not upgrade the claim.
+
+### Current decision
+
+The durable formal KB can now combine pinned repository-derived knowledge with explicitly registered, already-verified external assets while preserving exact source identity and validation boundaries. This does **not** implement generic TGserver intake, semantic candidate admission, supersession, confidence scoring, or rejection/audit workflows; those remain separate future scope.
+
+---
+
+## 2026-10-06 — CHAT GitHub relay added for direct GPT reuse of the real Master-PC KB
+
+**Status:** SOURCE/CI IMPLEMENTED; real GitHub round-trip E2E pending.
+
+### Previous design
+
+The KB was proven usable through the local MCP stdio runtime on the Master PC, but GPT CHAT itself had no direct route to submit a query and receive the result. That left the runtime usable locally but not yet directly reusable by the CHAT that built and coordinates the development flow.
+
+### Implemented/new design
+
+A narrow GitHub control-plane relay is added without creating another KB or search engine:
+
+- GPT CHAT writes a versioned request JSON to `control/gace-kb-chat-bridge-v1`;
+- the Master-PC watcher polls that branch;
+- `search` requests invoke only the existing MCP `search_code` tool with bm25/vector/hybrid;
+- `exact` requests resolve one unique Current `knowledge_id` from active reusable metadata and return matching Case/Relationship sidecars;
+- result JSON is committed back to the dedicated control branch through a temporary Git worktree;
+- CHAT reads the result through the existing GitHub connector;
+- arbitrary executable/tool/path selection is not accepted from requests;
+- query execution is read-only against Current KB authority.
+
+### Development/commonization boundary
+
+This capability is intentionally built and real-E2E-verified inside `gace-dev-kb` first. Only after CHAT-created search and exact requests complete through the real Master-PC MCP, and the unattended watcher task proves another request without Master manually running the worker, may the capability be moved through the GitHub Project for shared/common use across projects.
+
+### Evidence so far
+
+- request/exact Python unit tests added;
+- Linux/Windows PowerShell parser gates added for the one-shot processor, watcher, and task installer;
+- dedicated source/CI workflow added;
+- real Master-PC GitHub round-trip is not yet claimed.
+
+### Applying branch
+
+`feat/chat-github-kb-bridge-20261006`

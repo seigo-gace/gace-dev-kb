@@ -18,16 +18,24 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 
-def record(repository: str, commit: str, record_type: str = "change") -> dict[str, str]:
+def record(
+    repository: str,
+    commit: str,
+    record_type: str = "change",
+    source_suffix: str | None = None,
+) -> dict[str, str]:
+    source = f"git:{repository}@{commit}"
+    if source_suffix:
+        source += source_suffix
     return {
         "type": record_type,
         "repository": repository,
         "commit": commit,
-        "summary": f"summary {commit}",
+        "summary": f"summary {commit}{source_suffix or ''}",
         "cause": "",
         "fix": "",
         "validation": "",
-        "source": f"git:{repository}@{commit}",
+        "source": source,
     }
 
 
@@ -55,6 +63,24 @@ class CombineKnowledgeRecordsTests(unittest.TestCase):
         rows = module.combine([one, two])
         self.assertEqual(len(rows), 3)
         self.assertEqual({row["repository"] for row in rows}, {"org/one", "org/two"})
+
+    def test_preserves_distinct_sources_at_same_commit(self) -> None:
+        one = self.root / "one.jsonl"
+        two = self.root / "two.jsonl"
+        write_jsonl(one, [record("org/one", "aaa")])
+        write_jsonl(
+            two,
+            [
+                record("org/two", "shared", "implementation", "::skillOne"),
+                record("org/two", "shared", "implementation", "::skillTwo"),
+            ],
+        )
+
+        rows = module.combine([one, two])
+        self.assertEqual(len(rows), 3)
+        skill_rows = [row for row in rows if row["repository"] == "org/two"]
+        self.assertEqual(len(skill_rows), 2)
+        self.assertNotEqual(skill_rows[0]["source"], skill_rows[1]["source"])
 
     def test_rejects_single_repository_result(self) -> None:
         one = self.root / "one.jsonl"

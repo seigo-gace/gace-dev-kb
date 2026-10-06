@@ -1,0 +1,23 @@
+name: Runtime Health Windows Regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/reusable-asset-kb-schema-20261001
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-health-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Runtime health hidden-process exit-code and lock regression
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\test_modulecatalog_runtime_health_lock.ps1
