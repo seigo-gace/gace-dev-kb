@@ -334,3 +334,14 @@ real Catalog transport
 ```
 
 Until that real transported-data Windows gate passes, do not claim the new full reusable-asset pipeline is Master-PC validated and do not merge PR #3 to main.
+
+
+## TGserver ZERO P014 runtime logging
+
+G-ACE KB runtime request completion/failure metadata can be forwarded to TGserver ZERO project `P014` through the existing ZERO `POST /ingest/bulk` contract.
+
+Only bounded operational metadata is emitted: request ID, action (`search`/`exact`), PASS/FAIL, duration, and a bounded internal error code. Query text, knowledge IDs, KB content, search results, Case/Relationship content, arbitrary exception text, filesystem paths, and credentials are not forwarded.
+
+The producer is fail-open for KB operation. When `TGSERVER_LOG_URL` is unset, logging is disabled without changing the KB request result. A send is successful only when TGserver returns exactly one `accepted` or `duplicate` receipt.
+
+Runtime activation is separate from Source registration. `seigo-gace/gace-dev-kb/default -> P014` must exist in the TGserver ZERO registry and P014 topics/runtime routing must be verified before claiming live delivery.
