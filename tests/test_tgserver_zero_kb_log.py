@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import io
+
 import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -13,7 +12,7 @@ import tgserver_zero_kb_log as producer
 
 
 class FakeResponse:
-    def __init__(self, payload, status=200):
+    def __init__(self, payload, status=202):
         self.status = status
         self._payload = json.dumps(payload).encode()
     def read(self, _limit=-1):
@@ -40,7 +39,7 @@ class FakeOpener:
 
 class TgserverZeroKbLogTests(unittest.TestCase):
     def test_builds_fixed_p014_bounded_envelope(self):
-        log = producer.build_log(
+        log = producer.build_zero_log(
             request_id="req-001",
             action="search",
             status="PASS",
@@ -58,12 +57,11 @@ class TgserverZeroKbLogTests(unittest.TestCase):
             "duration_ms": 123,
             "error_code": None,
         })
-        self.assertNotIn("query", message)
-        self.assertNotIn("knowledge_id", message)
-        self.assertNotIn("result", message)
+        for forbidden in ("query", "knowledge_id", "result", "cases", "relationships"):
+            self.assertNotIn(forbidden, message)
 
-    def test_failure_only_keeps_bounded_error_code(self):
-        log = producer.build_log(
+    def test_failure_keeps_only_bounded_error_code(self):
+        log = producer.build_zero_log(
             request_id="req-002",
             action="exact",
             status="FAIL",
@@ -75,33 +73,67 @@ class TgserverZeroKbLogTests(unittest.TestCase):
         self.assertEqual(message["error_code"], "UNKNOWN")
         self.assertEqual(log["severity"], "error")
 
-    def test_sender_uses_bulk_without_auth_and_validates_receipt(self):
-        opener = FakeOpener(FakeResponse({"results": [{"status": "accepted"}]}))
+    def test_wraps_zero_bulk_envelope_in_generic_internal_event(self):
+        log = producer.build_zero_log(
+            request_id="req-003",
+            action="search",
+            status="PASS",
+            duration_ms=5,
+            timestamp="2026-10-06T14:00:01Z",
+        )
+        event = producer.build_gateway_event(log)
+        self.assertEqual(event["eventId"], "gace-kb:req-003:pass")
+        self.assertEqual(event["eventType"], "gace-kb.runtime")
+        self.assertEqual(event["sourceId"], "gace-kb-master-pc")
+        self.assertEqual(event["destinationId"], "tgserver-zero-bulk")
+        self.assertEqual(event["data"], {"logs": [log]})
+
+    def test_sender_uses_gateway_token_and_durable_receipt(self):
+        opener = FakeOpener(FakeResponse({
+            "ok": True,
+            "duplicate": False,
+            "eventId": "gateway-row-id",
+            "deliveries": 1,
+            "enqueueMode": "deferred+outbox",
+        }))
         result = producer.send_log(
-            producer.build_log(request_id="req-003", action="search", status="PASS", duration_ms=1),
-            env={"TGSERVER_LOG_URL": "http://127.0.0.1:3000", "TGSERVER_LOG_TIMEOUT_MS": "50"},
+            producer.build_zero_log(request_id="req-004", action="search", status="PASS", duration_ms=1),
+            env={
+                "GACE_EVENT_GATEWAY_URL": "https://gateway.example.test",
+                "GACE_EVENT_GATEWAY_TOKEN": "test-internal-token",
+                "GACE_EVENT_GATEWAY_TIMEOUT_MS": "50",
+            },
             opener=opener,
         )
-        self.assertEqual(result, {"status": "SENT"})
-        self.assertEqual(opener.request.full_url, "http://127.0.0.1:3000/ingest/bulk")
+        self.assertEqual(result, {"status": "SENT", "duplicate": False})
+        self.assertEqual(opener.request.full_url, "https://gateway.example.test/internal/events")
         headers = {k.lower(): v for k, v in opener.request.header_items()}
-        self.assertNotIn("authorization", headers)
+        self.assertEqual(headers["authorization"], "Bearer test-internal-token")
         body = json.loads(opener.request.data)
-        self.assertEqual(body["logs"][0]["project_id"], "P014")
+        self.assertEqual(body["destinationId"], "tgserver-zero-bulk")
+        self.assertEqual(body["data"]["logs"][0]["project_id"], "P014")
+        self.assertNotIn("test-internal-token", opener.request.data.decode())
 
-    def test_sender_is_fail_open_when_disabled_or_unavailable(self):
-        log = producer.build_log(request_id="req-004", action="search", status="PASS", duration_ms=1)
+    def test_sender_is_fail_open_when_unconfigured_or_unavailable(self):
+        log = producer.build_zero_log(request_id="req-005", action="search", status="PASS", duration_ms=1)
         self.assertEqual(producer.send_log(log, env={}, opener=FakeOpener()), {"status": "DISABLED"})
-        failed = producer.send_log(
-            log,
-            env={"TGSERVER_LOG_URL": "http://127.0.0.1:3000"},
-            opener=FakeOpener(error=OSError("offline")),
+        self.assertEqual(
+            producer.send_log(
+                log,
+                env={
+                    "GACE_EVENT_GATEWAY_URL": "https://gateway.example.test",
+                    "GACE_EVENT_GATEWAY_TOKEN": "token",
+                },
+                opener=FakeOpener(error=OSError("offline")),
+            ),
+            {"status": "FAILED", "reason": "TRANSPORT_OR_RECEIPT"},
         )
-        self.assertEqual(failed, {"status": "FAILED", "reason": "TRANSPORT_OR_RECEIPT"})
 
-    def test_receipt_rejects_unknown_status(self):
+    def test_rejects_non_durable_gateway_receipt(self):
         with self.assertRaises(ValueError):
-            producer.validate_receipt({"results": [{"status": "rejected"}]})
+            producer.validate_gateway_receipt({"ok": True, "duplicate": False}, 200)
+        with self.assertRaises(ValueError):
+            producer.validate_gateway_receipt({"ok": False, "duplicate": False}, 202)
 
 
 if __name__ == "__main__":
