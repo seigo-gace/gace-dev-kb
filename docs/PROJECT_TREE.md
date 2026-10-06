@@ -15,9 +15,11 @@ gace-dev-kb/
 │  ├─ DESIGN_DELTA.md
 │  ├─ REUSABLE_ASSET_KB_CONTRACT.md
 │  ├─ MODULECATALOG_KB_INTAKE_RUNTIME.md
-│  └─ MODULECATALOG_KB_RETENTION.md
+│  ├─ MODULECATALOG_KB_RETENTION.md
+│  └─ CHAT_GITHUB_KB_BRIDGE.md
 ├─ .github/workflows/
-│  └─ reusable-asset-kb-verify.yml
+│  ├─ reusable-asset-kb-verify.yml
+│  └─ chat-github-kb-bridge-verify.yml
 ├─ scripts/
 │  ├─ bootstrap-mvs-windows.ps1
 │  ├─ patch-mvs-windows-trial-safety.ps1
@@ -49,6 +51,10 @@ gace-dev-kb/
 │  ├─ prune-modulecatalog-kb-retention-windows.ps1
 │  ├─ watch-modulecatalog-kb-inbox-windows.ps1
 │  ├─ configure-modulecatalog-kb-receiver-task-windows.ps1
+│  ├─ gace_kb_chat_bridge.py
+│  ├─ process-gace-kb-chat-github-bridge-windows.ps1
+│  ├─ watch-gace-kb-chat-github-bridge-windows.ps1
+│  ├─ configure-gace-kb-chat-github-bridge-task-windows.ps1
 │  │
 │  ├─ run_modulecatalog_reusable_export.mjs          # producer compatibility test helper only
 │  ├─ test-modulecatalog-reusable-export-windows.ps1 # isolated/contract test helper
@@ -82,7 +88,8 @@ gace-dev-kb/
 │  ├─ test_modulecatalog_runtime_health_lock.ps1
 │  ├─ test_modulecatalog_receiver_service.ps1
 │  ├─ test_modulecatalog_receiver_backoff.ps1
-│  └─ test_modulecatalog_retention.ps1
+│  ├─ test_modulecatalog_retention.ps1
+│  └─ test_gace_kb_chat_bridge.py
 └─ .gitignore                  # local untracked evidence on Master PC; intentionally untouched
 ```
 
@@ -105,6 +112,9 @@ Operational Windows receive-to-runtime specification: inbox lifecycle, locks, ti
 
 ### `docs/MODULECATALOG_KB_RETENTION.md`
 Bounded operational backup/archive policy. Defines protected Current/rollback authority, retention counts, safe-root deletion boundaries and dry-run behavior.
+
+### `docs/CHAT_GITHUB_KB_BRIDGE.md`
+CHAT↔GitHub↔Master-PC KB control-plane contract. Defines the narrow search/exact request schema, security boundary, real-E2E completion gate, and the rule that this project proves the capability before GitHub Project commonization.
 
 ## Baseline repository/history path
 
@@ -193,6 +203,23 @@ Continuous singleton inbox consumer with heartbeat/failure JSONL, bounded rotati
 ### `scripts/configure-modulecatalog-kb-receiver-task-windows.ps1`
 Windows Scheduled Task installer source. Registers a current-user Limited AtLogOn receiver with persisted shallow/Deep health cadences, retention policy and bounded restart behavior. Explicit `RuntimeHealthSeconds=0` without an explicit Deep value disables both health cadences for compatibility. Repository presence does not mean the Master-PC task is installed.
 
+## CHAT GitHub KB bridge path
+
+### `scripts/gace_kb_chat_bridge.py`
+Read-only bridge executor. `search` is fixed to the existing MCP `search_code` tool; `exact` resolves one unique Current `knowledge_id` and returns structured metadata plus related Case/Relationship sidecars.
+
+### `scripts/process-gace-kb-chat-github-bridge-windows.ps1`
+One-shot GitHub control-branch processor. Fetches strict request paths, executes the local bridge, and publishes one result JSON through a temporary Git worktree without switching the main KB worktree.
+
+### `scripts/watch-gace-kb-chat-github-bridge-windows.ps1`
+Singleton polling watcher for unattended CHAT requests. Runtime state/logs stay under `F:\G-ACE-KB\data\knowledge-intake\chat-bridge`.
+
+### `scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1`
+Current-user Limited AtLogOn task installer for the bridge watcher. Real installation occurs only after one-shot GitHub round-trip E2E passes.
+
+### `tests/test_gace_kb_chat_bridge.py`
+Fail-closed request-schema and exact-retrieval unit coverage. Arbitrary action/tool execution is rejected.
+
 ## Producer compatibility helpers — not operational receive path
 
 ### `scripts/run_modulecatalog_reusable_export.mjs`
@@ -252,6 +279,9 @@ Proves bounded operational retention, stale scratch cleanup, idempotency, Curren
 
 ### `.github/workflows/reusable-asset-kb-verify.yml`
 Feature-branch CI. Covers Python/Node/PowerShell syntax, transport/inbox reliability, activation recovery, receiver service/backoff/retention, rich-corpus preservation, deterministic runtime-corpus integrity, accepted-to-live exact runtime projection, projection/search regressions, periodic Deep-health behavior, legacy KB regressions, pinned real ModuleCatalog producer compatibility, and an actual Windows Scheduled Task installation/startup/uninstall gate.
+
+### `.github/workflows/chat-github-kb-bridge-verify.yml`
+Dedicated CHAT bridge CI. Runs Python request/exact unit gates and parses the one-shot processor, watcher, and Scheduled Task installer on Linux PowerShell and Windows PowerShell.
 
 CI is not a substitute for the final genuine-transport Master-PC MVS runtime gate.
 
