@@ -26,21 +26,28 @@ jobs:
           python -m py_compile scripts/gace_kb_chat_bridge.py tests/test_gace_kb_chat_bridge.py
           python -B tests/test_gace_kb_chat_bridge.py
 
-      - name: PowerShell parser gate
+      - name: PowerShell parser gates
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'scripts/process-gace-kb-chat-github-bridge-windows.ps1'),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            throw 'CHAT_BRIDGE_POWERSHELL_PARSE_FAILED'
+          $files = @(
+            'scripts/process-gace-kb-chat-github-bridge-windows.ps1',
+            'scripts/watch-gace-kb-chat-github-bridge-windows.ps1',
+            'scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              throw "CHAT_BRIDGE_POWERSHELL_PARSE_FAILED=$file"
+            }
+            Write-Host "GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=LINUX FILE=$file"
           }
-          Write-Host 'GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=LINUX'
 
   windows-gates:
     runs-on: windows-latest
@@ -59,18 +66,25 @@ jobs:
           python -B tests/test_gace_kb_chat_bridge.py
           if ($LASTEXITCODE -ne 0) { throw "CHAT_BRIDGE_WINDOWS_PYTHON_FAILED=$LASTEXITCODE" }
 
-      - name: Windows PowerShell parser gate
+      - name: Windows PowerShell parser gates
         shell: powershell
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'scripts\process-gace-kb-chat-github-bridge-windows.ps1'),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            throw 'CHAT_BRIDGE_WINDOWS_POWERSHELL_PARSE_FAILED'
+          $files = @(
+            'scripts\process-gace-kb-chat-github-bridge-windows.ps1',
+            'scripts\watch-gace-kb-chat-github-bridge-windows.ps1',
+            'scripts\configure-gace-kb-chat-github-bridge-task-windows.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file :: $($_.Message)" }
+              throw "CHAT_BRIDGE_WINDOWS_POWERSHELL_PARSE_FAILED=$file"
+            }
+            Write-Host "GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=WINDOWS FILE=$file"
           }
-          Write-Host 'GACE_KB_CHAT_BRIDGE_PARSE=PASS OS=WINDOWS'
