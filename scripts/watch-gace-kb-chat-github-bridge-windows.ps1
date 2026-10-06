@@ -44,7 +44,7 @@ try {
             break
         }
         try {
-            $output = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Processor -Root $Root -ControlBranch $ControlBranch -MaxRequests 10 -TimeoutSeconds $RequestTimeoutSeconds 2>&1)
+            $output = @(& powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $Processor -Root $Root -ControlBranch $ControlBranch -MaxRequests 10 -TimeoutSeconds $RequestTimeoutSeconds 2>&1)
             $code = $LASTEXITCODE
             $detail = ($output -join [Environment]::NewLine)
             if ($detail.Length -gt 4000) { $detail = $detail.Substring($detail.Length - 4000) }
