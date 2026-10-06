@@ -604,3 +604,41 @@ The accepted ModuleCatalog source states that its local Skill Engine and reposit
 ### Current decision
 
 The durable formal KB can now combine pinned repository-derived knowledge with explicitly registered, already-verified external assets while preserving exact source identity and validation boundaries. This does **not** implement generic TGserver intake, semantic candidate admission, supersession, confidence scoring, or rejection/audit workflows; those remain separate future scope.
+
+---
+
+## 2026-10-06 — CHAT GitHub relay added for direct GPT reuse of the real Master-PC KB
+
+**Status:** SOURCE/CI IMPLEMENTED; real GitHub round-trip E2E pending.
+
+### Previous design
+
+The KB was proven usable through the local MCP stdio runtime on the Master PC, but GPT CHAT itself had no direct route to submit a query and receive the result. That left the runtime usable locally but not yet directly reusable by the CHAT that built and coordinates the development flow.
+
+### Implemented/new design
+
+A narrow GitHub control-plane relay is added without creating another KB or search engine:
+
+- GPT CHAT writes a versioned request JSON to `control/gace-kb-chat-bridge-v1`;
+- the Master-PC watcher polls that branch;
+- `search` requests invoke only the existing MCP `search_code` tool with bm25/vector/hybrid;
+- `exact` requests resolve one unique Current `knowledge_id` from active reusable metadata and return matching Case/Relationship sidecars;
+- result JSON is committed back to the dedicated control branch through a temporary Git worktree;
+- CHAT reads the result through the existing GitHub connector;
+- arbitrary executable/tool/path selection is not accepted from requests;
+- query execution is read-only against Current KB authority.
+
+### Development/commonization boundary
+
+This capability is intentionally built and real-E2E-verified inside `gace-dev-kb` first. Only after CHAT-created search and exact requests complete through the real Master-PC MCP, and the unattended watcher task proves another request without Master manually running the worker, may the capability be moved through the GitHub Project for shared/common use across projects.
+
+### Evidence so far
+
+- request/exact Python unit tests added;
+- Linux/Windows PowerShell parser gates added for the one-shot processor, watcher, and task installer;
+- dedicated source/CI workflow added;
+- real Master-PC GitHub round-trip is not yet claimed.
+
+### Applying branch
+
+`feat/chat-github-kb-bridge-20261006`
