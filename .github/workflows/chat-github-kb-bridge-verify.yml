@@ -37,6 +37,7 @@ jobs:
             '.gace-control/command-validation/master-pc-chat-kb-bridge-e2e.ps1',
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect.ps1',
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect-invoke.ps1',
+            '.gace-control/command-validation/master-pc-p014-diagnostic-reflect-launcher.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback-invoke.ps1',
             '.gace-control/command-validation/master-pc-p014-gateway-client-probe.ps1',
