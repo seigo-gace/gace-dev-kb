@@ -178,3 +178,8 @@ if (-not $source.Contains('if ($pushExit -ne 0) { throw "CHAT_BRIDGE_GIT_PUSH_FA
     throw 'CHAT_BRIDGE_PUSH_FAILURE_GUARD_MISSING'
 }
 Write-Host 'GACE_KB_CHAT_GIT_PUSH_STDERR=PASS REAL_FAILURE_GUARD=PASS'
+
+# The preceding nonzero fixtures were asserted. Do not leak their exit code
+# into the GitHub Actions PowerShell wrapper after a successful test suite.
+& python -c 'import sys; sys.exit(0)'
+if ($LASTEXITCODE -ne 0) { throw 'CHAT_BRIDGE_NATIVE_PROBE_CLEANUP_FAILED' }
