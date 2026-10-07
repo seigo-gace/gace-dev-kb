@@ -356,4 +356,6 @@ Only bounded operational metadata is emitted: request ID, action (`search`/`exac
 
 Logging is fail-open for KB requests. If `GACE_EVENT_GATEWAY_URL` or `GACE_EVENT_GATEWAY_TOKEN` is absent, logging is disabled without changing the KB result. A log is considered accepted only after the Gateway returns its durable HTTP 202 receipt with `ok=true`.
 
+At startup, the Windows watcher imports exactly those two variables from User scope into its Process environment for the child processor, without printing or persisting their values. Missing User values clear the corresponding Process variables. Native processor/push stderr is captured as diagnostic output, with exit codes deciding success or failure; watcher detail remains bounded to 4000 characters and preserves the emitted `GACE_KB_TGZERO_LOG` status. Source/CI verification of this fix does not imply Master-PC deployment or a new live P014 delivery.
+
 TGserver ZERO registry ownership remains separate: `seigo-gace/gace-dev-kb/default -> P014` in G002. Topic provisioning, Gateway deployment configuration, Telegram raw persistence, and central Reader retrieval must each be verified independently before live delivery is claimed.

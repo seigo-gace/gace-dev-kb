@@ -6,6 +6,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Scheduled Task processes may predate the User-scope logging configuration.
+foreach ($name in @('GACE_EVENT_GATEWAY_URL','GACE_EVENT_GATEWAY_TOKEN')) {
+    $userValue = [Environment]::GetEnvironmentVariable($name,'User')
+    if ([string]::IsNullOrEmpty($userValue)) { $userValue = $null }
+    [Environment]::SetEnvironmentVariable($name,$userValue,'Process')
+}
+$userValue = $null
+
 $Repo = Join-Path $Root 'repo'
 $Processor = Join-Path $Repo 'scripts\\process-gace-kb-chat-github-bridge-windows.ps1'
 $BridgeRoot = Join-Path $Root 'data\\knowledge-intake\\chat-bridge'
@@ -44,14 +53,31 @@ try {
             break
         }
         try {
-            $output = @(& powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $Processor -Root $Root -ControlBranch $ControlBranch -MaxRequests 10 -TimeoutSeconds $RequestTimeoutSeconds 2>&1)
-            $code = $LASTEXITCODE
+            $previousPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $output = @(& powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $Processor -Root $Root -ControlBranch $ControlBranch -MaxRequests 10 -TimeoutSeconds $RequestTimeoutSeconds 2>&1)
+                $code = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $previousPreference
+            }
             $detail = ($output -join [Environment]::NewLine)
-            if ($detail.Length -gt 4000) { $detail = $detail.Substring($detail.Length - 4000) }
+            if ($detail.Length -gt 4000) {
+                $logMarker = [regex]::Match($detail,'GACE_KB_TGZERO_LOG=(SENT|DISABLED|FAILED)\b').Value
+                $tailLength = 4000 - $logMarker.Length - [Environment]::NewLine.Length
+                $detail = $logMarker + [Environment]::NewLine + $detail.Substring($detail.Length - $tailLength)
+            }
             if ($code -eq 0) { Write-BridgeEvent -Status 'POLL_PASS' -Detail $detail }
-            else { Write-BridgeEvent -Status 'POLL_FAIL' -Detail ("exit={0} {1}" -f $code,$detail) }
+            else {
+                $detail = "exit={0} {1}" -f $code,$detail
+                if ($detail.Length -gt 4000) { $detail = $detail.Substring(0,4000) }
+                Write-BridgeEvent -Status 'POLL_FAIL' -Detail $detail
+            }
         } catch {
-            Write-BridgeEvent -Status 'POLL_EXCEPTION' -Detail $_.Exception.Message
+            $detail = $_.Exception.Message
+            if ($detail.Length -gt 4000) { $detail = $detail.Substring(0,4000) }
+            Write-BridgeEvent -Status 'POLL_EXCEPTION' -Detail $detail
         }
         Start-Sleep -Seconds $PollSeconds
     }

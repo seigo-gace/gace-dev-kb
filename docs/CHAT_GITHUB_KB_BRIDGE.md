@@ -122,8 +122,10 @@ The request cannot name an arbitrary executable, PowerShell command, Python modu
 
 - `scripts/watch-gace-kb-chat-github-bridge-windows.ps1`
   - singleton polling watcher;
+  - imports only `GACE_EVENT_GATEWAY_URL` and `GACE_EVENT_GATEWAY_TOKEN` from Windows User scope to Process scope at startup, clearing Process values when absent and never outputting or persisting values;
   - periodically invokes the one-shot processor;
-  - writes bounded operational events under `F:\G-ACE-KB\data\knowledge-intake\chat-bridge`.
+  - classifies native processor exit 0 as `POLL_PASS` and nonzero as `POLL_FAIL`, retaining normal stderr as diagnostics while actual terminating exceptions remain `POLL_EXCEPTION`;
+  - writes operational events under `F:\G-ACE-KB\data\knowledge-intake\chat-bridge`, with detail bounded to 4000 characters and emitted `GACE_KB_TGZERO_LOG=SENT|DISABLED|FAILED` preserved.
 
 - `scripts/configure-gace-kb-chat-github-bridge-task-windows.ps1`
   - registers a current-user Limited AtLogOn task only after real one-shot E2E proves the round trip;

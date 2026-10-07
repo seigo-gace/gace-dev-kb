@@ -120,8 +120,17 @@ foreach ($requestPath in $pending) {
         if ($LASTEXITCODE -ne 0) { throw "CHAT_BRIDGE_GIT_ADD_FAILED=$requestId" }
         & git -C $worktree -c user.name='G-ACE KB Chat Bridge' -c user.email='gace-kb-chat-bridge@users.noreply.github.com' commit -m "bridge: result $requestId"
         if ($LASTEXITCODE -ne 0) { throw "CHAT_BRIDGE_GIT_COMMIT_FAILED=$requestId" }
-        & git -C $worktree push origin "HEAD:refs/heads/$ControlBranch"
-        if ($LASTEXITCODE -ne 0) { throw "CHAT_BRIDGE_GIT_PUSH_FAILED=$requestId" }
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $pushOutput = @(& git -C $worktree push origin "HEAD:refs/heads/$ControlBranch" 2>&1)
+            $pushExit = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        if ($pushOutput.Count -gt 0) { Write-Host ($pushOutput -join [Environment]::NewLine) }
+        if ($pushExit -ne 0) { throw "CHAT_BRIDGE_GIT_PUSH_FAILED=$requestId" }
 
         $status = if ($bridgeExit -eq 0) { 'PASS' } else { 'FAIL_RESULT_PUBLISHED' }
         Write-Host "GACE_KB_CHAT_REQUEST=$status REQUEST=$requestId RESULT=$resultPath"
