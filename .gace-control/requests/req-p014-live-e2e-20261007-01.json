@@ -1,0 +1,12 @@
+{
+  "schema_version": "gace.kb.chat-request.v1",
+  "request_id": "req-p014-live-e2e-20261007-01",
+  "action": "search",
+  "query": "approval routing reusable logic",
+  "mode": "hybrid",
+  "limit": 5,
+  "requested_by": "gpt-chat",
+  "requester_repository": "seigo-gace/gace-dev-kb",
+  "requester_project": "G-ACE Development Platform",
+  "requester_change_unit": "p014-live-e2e"
+}
