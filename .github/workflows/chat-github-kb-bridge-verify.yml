@@ -37,6 +37,8 @@ jobs:
             '.gace-control/command-validation/master-pc-chat-kb-bridge-e2e.ps1',
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect.ps1',
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect-invoke.ps1',
+            '.gace-control/command-validation/master-pc-p014-request-readback.ps1',
+            '.gace-control/command-validation/master-pc-p014-request-readback-invoke.ps1',
             'tests/test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
@@ -88,6 +90,8 @@ jobs:
             '.gace-control\command-validation\master-pc-chat-kb-bridge-e2e.ps1',
             '.gace-control\command-validation\master-pc-p014-diagnostic-reflect.ps1',
             '.gace-control\command-validation\master-pc-p014-diagnostic-reflect-invoke.ps1',
+            '.gace-control\command-validation\master-pc-p014-request-readback.ps1',
+            '.gace-control\command-validation\master-pc-p014-request-readback-invoke.ps1',
             'tests\test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
