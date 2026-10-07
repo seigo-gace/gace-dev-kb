@@ -110,6 +110,7 @@ class TgserverZeroKbLogTests(unittest.TestCase):
         self.assertEqual(opener.request.full_url, "https://gateway.example.test/internal/events")
         headers = {k.lower(): v for k, v in opener.request.header_items()}
         self.assertEqual(headers["authorization"], "Bearer test-internal-token")
+        self.assertEqual(headers["user-agent"], "G-ACE-KB-Logger/1.0")
         body = json.loads(opener.request.data)
         self.assertEqual(body["destinationId"], "tgserver-zero-bulk")
         self.assertEqual(body["data"]["logs"][0]["project_id"], "P014")
