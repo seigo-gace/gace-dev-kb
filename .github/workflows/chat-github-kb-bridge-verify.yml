@@ -40,6 +40,7 @@ jobs:
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect-launcher.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback-invoke.ps1',
+            '.gace-control/command-validation/master-pc-p014-request-readback-launcher.ps1',
             '.gace-control/command-validation/master-pc-p014-gateway-client-probe.ps1',
             '.gace-control/command-validation/master-pc-p014-gateway-client-probe-launcher.ps1',
             'tests/test_chat_bridge_path_filters.ps1'
@@ -96,6 +97,7 @@ jobs:
             '.gace-control\command-validation\master-pc-p014-diagnostic-reflect-launcher.ps1',
             '.gace-control\command-validation\master-pc-p014-request-readback.ps1',
             '.gace-control\command-validation\master-pc-p014-request-readback-invoke.ps1',
+            '.gace-control\command-validation\master-pc-p014-request-readback-launcher.ps1',
             '.gace-control\command-validation\master-pc-p014-gateway-client-probe.ps1',
             '.gace-control\command-validation\master-pc-p014-gateway-client-probe-launcher.ps1',
             'tests\test_chat_bridge_path_filters.ps1'
