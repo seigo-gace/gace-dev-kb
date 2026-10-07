@@ -40,6 +40,7 @@ jobs:
             '.gace-control/command-validation/master-pc-p014-request-readback.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback-invoke.ps1',
             '.gace-control/command-validation/master-pc-p014-gateway-client-probe.ps1',
+            '.gace-control/command-validation/master-pc-p014-gateway-client-probe-launcher.ps1',
             'tests/test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
@@ -94,6 +95,7 @@ jobs:
             '.gace-control\command-validation\master-pc-p014-request-readback.ps1',
             '.gace-control\command-validation\master-pc-p014-request-readback-invoke.ps1',
             '.gace-control\command-validation\master-pc-p014-gateway-client-probe.ps1',
+            '.gace-control\command-validation\master-pc-p014-gateway-client-probe-launcher.ps1',
             'tests\test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
@@ -115,3 +117,17 @@ jobs:
         shell: powershell
         run: |
           .\\tests\\test_chat_bridge_path_filters.ps1
+
+      - name: Windows probe UTF-8 materialization regression
+        shell: powershell
+        run: |
+          $spec='HEAD:.gace-control/command-validation/p014-gateway-client-probe.py'
+          $tmp=Join-Path $env:TEMP 'p014-gateway-client-probe-ci.py'
+          $source=@(& git show $spec)
+          if($LASTEXITCODE -ne 0){throw 'PROBE_SOURCE_READ_FAILED'}
+          Set-Content -Path $tmp -Value $source -Encoding UTF8
+          python -m py_compile $tmp
+          if($LASTEXITCODE -ne 0){throw 'PROBE_UTF8_MATERIALIZATION_FAILED'}
+          Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+          Write-Host 'P014_PROBE_UTF8_MATERIALIZATION=PASS'
+
