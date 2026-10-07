@@ -2,7 +2,7 @@ $ErrorActionPreference='Stop'
 $project='G-ACE Development Platform'
 $log='F:\G-ACE-KB\data\knowledge-intake\chat-bridge\watcher.jsonl'
 $task='G-ACE-KB-ChatGitHubBridge'
-$request='req-p014-live-e2e-20261007-03'
+$request='req-p014-live-e2e-20261007-04'
 $rc=0
 $err='NONE'
 Write-Output '========== GACE_RESULT_BEGIN =========='
