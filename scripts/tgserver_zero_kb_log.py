@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -118,8 +119,22 @@ def send_log(log: dict, *, env: dict[str, str] | None = None, opener=None) -> di
             payload = json.loads(response.read(65536))
         validate_gateway_receipt(payload, status)
         return {"status": "SENT", "duplicate": bool(payload["duplicate"])}
+    except urllib.error.HTTPError as exc:
+        return {"status": "FAILED", "reason": f"HTTP_{int(exc.code)}"}
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            return {"status": "FAILED", "reason": "TIMEOUT"}
+        return {"status": "FAILED", "reason": "URL_ERROR"}
+    except TimeoutError:
+        return {"status": "FAILED", "reason": "TIMEOUT"}
+    except json.JSONDecodeError:
+        return {"status": "FAILED", "reason": "RECEIPT_JSON_INVALID"}
+    except ValueError:
+        return {"status": "FAILED", "reason": "RECEIPT_INVALID"}
+    except OSError:
+        return {"status": "FAILED", "reason": "TRANSPORT_ERROR"}
     except Exception:
-        return {"status": "FAILED", "reason": "TRANSPORT_OR_RECEIPT"}
+        return {"status": "FAILED", "reason": "UNEXPECTED_ERROR"}
 
 
 def main() -> int:
@@ -139,9 +154,10 @@ def main() -> int:
             error_code=args.error_code,
         )
         result = send_log(log)
+        reason = str(result.get("reason") or "NONE")
         print(
             f"GACE_KB_TGZERO_LOG={result['status']} PROJECT_ID={PROJECT_ID} "
-            f"REQUEST={args.request_id} ACTION={args.action} VIA=GENERIC_GATEWAY"
+            f"REQUEST={args.request_id} ACTION={args.action} REASON={reason} VIA=GENERIC_GATEWAY"
         )
         return 0
     except Exception as exc:
