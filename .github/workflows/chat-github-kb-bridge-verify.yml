@@ -23,7 +23,7 @@ jobs:
 
       - name: Python syntax and unit gates
         run: |
-          python -m py_compile scripts/gace_kb_chat_bridge.py scripts/tgserver_zero_kb_log.py tests/test_gace_kb_chat_bridge.py tests/test_tgserver_zero_kb_log.py
+          python -m py_compile scripts/gace_kb_chat_bridge.py scripts/tgserver_zero_kb_log.py tests/test_gace_kb_chat_bridge.py tests/test_tgserver_zero_kb_log.py .gace-control/command-validation/p014-gateway-client-probe.py
           python -B tests/test_gace_kb_chat_bridge.py
           python -B tests/test_tgserver_zero_kb_log.py
 
@@ -39,6 +39,7 @@ jobs:
             '.gace-control/command-validation/master-pc-p014-diagnostic-reflect-invoke.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback.ps1',
             '.gace-control/command-validation/master-pc-p014-request-readback-invoke.ps1',
+            '.gace-control/command-validation/master-pc-p014-gateway-client-probe.ps1',
             'tests/test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
@@ -92,6 +93,7 @@ jobs:
             '.gace-control\command-validation\master-pc-p014-diagnostic-reflect-invoke.ps1',
             '.gace-control\command-validation\master-pc-p014-request-readback.ps1',
             '.gace-control\command-validation\master-pc-p014-request-readback-invoke.ps1',
+            '.gace-control\command-validation\master-pc-p014-gateway-client-probe.ps1',
             'tests\test_chat_bridge_path_filters.ps1'
           )
           foreach ($file in $files) {
