@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.error
 import unittest
 from pathlib import Path
 
@@ -116,17 +117,44 @@ class TgserverZeroKbLogTests(unittest.TestCase):
 
     def test_sender_is_fail_open_when_unconfigured_or_unavailable(self):
         log = producer.build_zero_log(request_id="req-005", action="search", status="PASS", duration_ms=1)
+        env = {
+            "GACE_EVENT_GATEWAY_URL": "https://gateway.example.test",
+            "GACE_EVENT_GATEWAY_TOKEN": "token",
+        }
         self.assertEqual(producer.send_log(log, env={}, opener=FakeOpener()), {"status": "DISABLED"})
+        self.assertEqual(
+            producer.send_log(log, env=env, opener=FakeOpener(error=OSError("offline"))),
+            {"status": "FAILED", "reason": "TRANSPORT_ERROR"},
+        )
         self.assertEqual(
             producer.send_log(
                 log,
-                env={
-                    "GACE_EVENT_GATEWAY_URL": "https://gateway.example.test",
-                    "GACE_EVENT_GATEWAY_TOKEN": "token",
-                },
-                opener=FakeOpener(error=OSError("offline")),
+                env=env,
+                opener=FakeOpener(error=urllib.error.HTTPError(
+                    "https://gateway.example.test/internal/events", 403, "forbidden", {}, None
+                )),
             ),
-            {"status": "FAILED", "reason": "TRANSPORT_OR_RECEIPT"},
+            {"status": "FAILED", "reason": "HTTP_403"},
+        )
+        self.assertEqual(
+            producer.send_log(
+                log,
+                env=env,
+                opener=FakeOpener(error=urllib.error.URLError("dns")),
+            ),
+            {"status": "FAILED", "reason": "URL_ERROR"},
+        )
+        self.assertEqual(
+            producer.send_log(
+                log,
+                env=env,
+                opener=FakeOpener(error=urllib.error.URLError(TimeoutError("timeout"))),
+            ),
+            {"status": "FAILED", "reason": "TIMEOUT"},
+        )
+        self.assertEqual(
+            producer.send_log(log, env=env, opener=FakeOpener(FakeResponse({"ok": True}, status=202))),
+            {"status": "FAILED", "reason": "RECEIPT_INVALID"},
         )
 
     def test_rejects_non_durable_gateway_receipt(self):
