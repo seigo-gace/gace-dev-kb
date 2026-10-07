@@ -110,6 +110,7 @@ def send_log(log: dict, *, env: dict[str, str] | None = None, opener=None) -> di
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
+            "User-Agent": "G-ACE-KB-Logger/1.0",
         },
     )
     client = opener or urllib.request.build_opener()
