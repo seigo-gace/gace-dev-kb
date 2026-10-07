@@ -14,8 +14,10 @@ try {
     & git fetch --no-tags origin 'refs/heads/ops/p014-diagnostic-reflect-command-20261007:refs/remotes/origin/ops/p014-diagnostic-reflect-command-20261007'
     if($LASTEXITCODE -ne 0){throw 'COMMAND_FETCH_FAILED'}
     $spec=$ref + ':.gace-control/command-validation/p014-gateway-client-probe.py'
-    & git show $spec > $tmp
-    if($LASTEXITCODE -ne 0){throw 'COMMAND_MATERIALIZE_FAILED'}
+    $source=@(& git show $spec)
+    $gitRc=$LASTEXITCODE
+    if($gitRc -ne 0){throw 'COMMAND_MATERIALIZE_FAILED'}
+    Set-Content -Path $tmp -Value $source -Encoding UTF8
     & python $tmp
     $probeRc=$LASTEXITCODE
     if($probeRc -ne 0){throw "PYTHON_PROBE_FAILED=$probeRc"}
